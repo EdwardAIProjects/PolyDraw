@@ -111,6 +111,7 @@ let selectedVertexIndex: number | null = null;
 let dragState: DragState | null = null;
 let lastPointerWorld: Point = { x: 0, y: 0 };
 let lastPointerSnap: Point = { x: 0, y: 0 };
+let snapIsDisabled = false;
 let spaceIsDown = false;
 let toastTimer = 0;
 
@@ -221,6 +222,7 @@ app.innerHTML = `
           <span><kbd>Esc</kbd></span><span>Cancel or clear selection</span>
           <span><kbd>Delete</kbd></span><span>Delete selection</span>
           <span><kbd>Shift</kbd> + drag</span><span>Add to selection</span>
+          <span><kbd>Shift</kbd></span><span>Place or move vertices freely</span>
           <span><kbd>+</kbd> / <kbd>-</kbd></span><span>Zoom</span>
           <span><kbd>0</kbd></span><span>Center view</span>
           <span><kbd>1</kbd></span><span>Reset camera</span>
@@ -405,6 +407,21 @@ function snapPoint(point: Point): Point {
   };
 }
 
+function getPlacementPoint(point: Point, disableSnap: boolean): Point {
+  return disableSnap ? roundPoint(point) : snapPoint(point);
+}
+
+function getCurrentPlacementPoint(): Point {
+  return snapIsDisabled ? roundPoint(lastPointerWorld) : lastPointerSnap;
+}
+
+function roundPoint(point: Point): Point {
+  return {
+    x: Math.round(point.x),
+    y: Math.round(point.y),
+  };
+}
+
 function getPointerPoint(event: PointerEvent | MouseEvent | WheelEvent): Point {
   const rect = canvas.getBoundingClientRect();
   return {
@@ -563,8 +580,9 @@ function drawMarquee(marquee: Extract<DragState, { kind: "marquee" }>) {
 
 function drawDraftPolygon() {
   const previewVertices = [...draftVertices];
-  if (!pointsEqual(previewVertices[previewVertices.length - 1], lastPointerSnap)) {
-    previewVertices.push(lastPointerSnap);
+  const previewPoint = getCurrentPlacementPoint();
+  if (!pointsEqual(previewVertices[previewVertices.length - 1], previewPoint)) {
+    previewVertices.push(previewPoint);
   }
 
   context.save();
@@ -611,9 +629,10 @@ function drawSnapMarker() {
     return;
   }
 
-  const screen = worldToScreen(lastPointerSnap);
+  const screen = worldToScreen(getCurrentPlacementPoint());
   context.save();
   context.strokeStyle = mode === "select" ? "#168a6a" : "#d1406b";
+  context.globalAlpha = snapIsDisabled ? 0.72 : 1;
   context.lineWidth = 1.5;
   context.beginPath();
   context.moveTo(screen.x - 7, screen.y);
@@ -694,7 +713,7 @@ function syncCanvasCursor() {
 }
 
 function addDraftVertex(point: Point) {
-  if (draftVertices.length >= 3 && pointsEqual(point, draftVertices[0])) {
+  if (draftVertices.length >= 3 && isCloseToDraftStart(point)) {
     finishDraft();
     return;
   }
@@ -707,6 +726,15 @@ function addDraftVertex(point: Point) {
   draftVertices.push(point);
   clearSelection();
   draw();
+}
+
+function isCloseToDraftStart(point: Point): boolean {
+  const start = draftVertices[0];
+  if (!start) {
+    return false;
+  }
+  const closeRadius = 14 / viewport.scale;
+  return distance(point, start) <= closeRadius;
 }
 
 function finishDraft() {
@@ -874,19 +902,21 @@ function moveSelectedVertex(point: Point) {
   polygon.vertices[selectedVertexIndex] = point;
 }
 
-function movePolygons(polygonIds: string[], currentWorld: Point) {
+function movePolygons(polygonIds: string[], currentWorld: Point, disableSnap: boolean) {
   if (dragState?.kind !== "polygon") {
     return;
   }
 
   const dx = currentWorld.x - dragState.lastWorld.x;
   const dy = currentWorld.y - dragState.lastWorld.y;
-  const snappedDelta = {
-    x: Math.round(dx / documentState.gridSize) * documentState.gridSize,
-    y: Math.round(dy / documentState.gridSize) * documentState.gridSize,
+  const delta = disableSnap
+    ? { x: Math.round(dx), y: Math.round(dy) }
+    : {
+        x: Math.round(dx / documentState.gridSize) * documentState.gridSize,
+        y: Math.round(dy / documentState.gridSize) * documentState.gridSize,
   };
 
-  if (snappedDelta.x === 0 && snappedDelta.y === 0) {
+  if (delta.x === 0 && delta.y === 0) {
     return;
   }
 
@@ -897,14 +927,14 @@ function movePolygons(polygonIds: string[], currentWorld: Point) {
     }
 
     polygon.vertices = polygon.vertices.map((vertex) => ({
-      x: vertex.x + snappedDelta.x,
-      y: vertex.y + snappedDelta.y,
+      x: vertex.x + delta.x,
+      y: vertex.y + delta.y,
     }));
   }
 
   dragState.lastWorld = {
-    x: dragState.lastWorld.x + snappedDelta.x,
-    y: dragState.lastWorld.y + snappedDelta.y,
+    x: dragState.lastWorld.x + delta.x,
+    y: dragState.lastWorld.y + delta.y,
   };
 }
 
@@ -921,7 +951,8 @@ function deleteSelection() {
 }
 
 function updateReadouts() {
-  coordinateReadout.textContent = `${Math.round(lastPointerSnap.x)}, ${Math.round(lastPointerSnap.y)}`;
+  const readoutPoint = getCurrentPlacementPoint();
+  coordinateReadout.textContent = `${round(readoutPoint.x)}, ${round(readoutPoint.y)}`;
   zoomReadout.textContent = `${Math.round(viewport.scale * 100)}%`;
   const count = documentState.polygons.length;
   const selectedCount = selectedPolygonIds.size;
@@ -1194,6 +1225,7 @@ canvas.addEventListener("pointerdown", (event) => {
   const screen = getPointerPoint(event);
   lastPointerWorld = screenToWorld(screen);
   lastPointerSnap = snapPoint(lastPointerWorld);
+  snapIsDisabled = event.shiftKey;
 
   if (event.button === 1 || event.button === 2 || spaceIsDown || mode === "pan") {
     event.preventDefault();
@@ -1213,7 +1245,7 @@ canvas.addEventListener("pointerdown", (event) => {
       finishDraft();
       return;
     }
-    addDraftVertex(lastPointerSnap);
+    addDraftVertex(getPlacementPoint(lastPointerWorld, event.shiftKey));
     return;
   }
 
@@ -1228,6 +1260,7 @@ canvas.addEventListener("pointermove", (event) => {
   const screen = getPointerPoint(event);
   lastPointerWorld = screenToWorld(screen);
   lastPointerSnap = snapPoint(lastPointerWorld);
+  snapIsDisabled = event.shiftKey;
 
   if (dragState?.kind === "pan") {
     viewport.x = dragState.viewX + event.clientX - dragState.startX;
@@ -1235,9 +1268,9 @@ canvas.addEventListener("pointermove", (event) => {
   } else if (dragState?.kind === "vertex") {
     selectedPolygonId = dragState.polygonId;
     selectedVertexIndex = dragState.vertexIndex;
-    moveSelectedVertex(lastPointerSnap);
+    moveSelectedVertex(getPlacementPoint(lastPointerWorld, event.shiftKey));
   } else if (dragState?.kind === "polygon") {
-    movePolygons(dragState.polygonIds, lastPointerWorld);
+    movePolygons(dragState.polygonIds, lastPointerWorld, event.shiftKey);
   } else if (dragState?.kind === "marquee") {
     dragState.currentWorld = lastPointerWorld;
   }
@@ -1370,6 +1403,11 @@ window.addEventListener("keydown", (event) => {
     syncCanvasCursor();
   }
 
+  if (event.key === "Shift") {
+    snapIsDisabled = true;
+    draw();
+  }
+
   if (event.key === "Enter" && mode === "draw") {
     finishDraft();
   }
@@ -1394,6 +1432,11 @@ window.addEventListener("keyup", (event) => {
   if (event.code === "Space") {
     spaceIsDown = false;
     syncCanvasCursor();
+  }
+
+  if (event.key === "Shift") {
+    snapIsDisabled = false;
+    draw();
   }
 });
 
