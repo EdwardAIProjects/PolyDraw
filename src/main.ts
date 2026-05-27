@@ -10,6 +10,7 @@ type Point = {
 type PolygonShape = {
   id: string;
   vertices: Point[];
+  snapAnchor: Point;
   fill: string;
   stroke: string;
   opacity: number;
@@ -48,6 +49,7 @@ type DragState =
       polygonIds: string[];
       lastWorld: Point;
       originalVertices: Map<string, Point[]>;
+      originalAnchors: Map<string, Point>;
     }
   | {
       kind: "marquee";
@@ -315,6 +317,7 @@ function parseDrawingFile(value: unknown): DrawingFile {
     return {
       id: typeof polygon.id === "string" ? polygon.id : createId(),
       vertices,
+      snapAnchor: parsePoint(polygon.snapAnchor) ?? vertices[0],
       fill: typeof polygon.fill === "string" ? polygon.fill : DEFAULT_FILL,
       stroke: typeof polygon.stroke === "string" ? polygon.stroke : DEFAULT_STROKE,
       opacity: clamp(Number(polygon.opacity), 0.05, 1),
@@ -331,6 +334,18 @@ function parseDrawingFile(value: unknown): DrawingFile {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function parsePoint(value: unknown): Point | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const point = {
+    x: Number(value.x),
+    y: Number(value.y),
+  };
+  return Number.isFinite(point.x) && Number.isFinite(point.y) ? point : null;
 }
 
 function saveDocument() {
@@ -410,6 +425,14 @@ function snapPoint(point: Point): Point {
   return {
     x: Math.round(point.x / grid) * grid,
     y: Math.round(point.y / grid) * grid,
+  };
+}
+
+function snapPointRelativeToAnchor(point: Point, anchor: Point): Point {
+  const grid = documentState.gridSize;
+  return {
+    x: anchor.x + Math.round((point.x - anchor.x) / grid) * grid,
+    y: anchor.y + Math.round((point.y - anchor.y) / grid) * grid,
   };
 }
 
@@ -732,6 +755,10 @@ function pasteSelection() {
   const pastedPolygons = clipboardPolygons.map((polygon) => ({
     ...polygon,
     id: createId(),
+    snapAnchor: {
+      x: polygon.snapAnchor.x + offset,
+      y: polygon.snapAnchor.y + offset,
+    },
     vertices: polygon.vertices.map((vertex) => ({
       x: vertex.x + offset,
       y: vertex.y + offset,
@@ -751,6 +778,7 @@ function pasteSelection() {
 function toClipboardPolygon(polygon: PolygonShape): ClipboardPolygon {
   return {
     vertices: polygon.vertices.map((vertex) => ({ ...vertex })),
+    snapAnchor: { ...polygon.snapAnchor },
     fill: polygon.fill,
     stroke: polygon.stroke,
     opacity: polygon.opacity,
@@ -799,6 +827,7 @@ function finishDraft() {
   const polygon: PolygonShape = {
     id: createId(),
     vertices: [...draftVertices],
+    snapAnchor: draftVertices[0],
     fill: fillColorInput.value,
     stroke: strokeColorInput.value,
     opacity: clamp(Number(opacityInput.value), 0.05, 1),
@@ -852,6 +881,7 @@ function selectAt(world: Point, additive: boolean) {
       polygonIds: [...selectedPolygonIds],
       lastWorld: world,
       originalVertices: capturePolygonVertices([...selectedPolygonIds]),
+      originalAnchors: capturePolygonAnchors([...selectedPolygonIds]),
     };
     return;
   }
@@ -957,6 +987,17 @@ function capturePolygonVertices(polygonIds: string[]): Map<string, Point[]> {
   return vertices;
 }
 
+function capturePolygonAnchors(polygonIds: string[]): Map<string, Point> {
+  const idSet = new Set(polygonIds);
+  const anchors = new Map<string, Point>();
+  for (const polygon of documentState.polygons) {
+    if (idSet.has(polygon.id)) {
+      anchors.set(polygon.id, { ...polygon.snapAnchor });
+    }
+  }
+  return anchors;
+}
+
 function moveSelectedVertex(point: Point) {
   if (!selectedPolygonId || selectedVertexIndex === null) {
     return;
@@ -975,49 +1016,60 @@ function movePolygons(polygonIds: string[], currentWorld: Point, disableSnap: bo
     return;
   }
 
-  const dx = currentWorld.x - dragState.lastWorld.x;
-  const dy = currentWorld.y - dragState.lastWorld.y;
-  const delta = disableSnap ? { x: Math.round(dx), y: Math.round(dy) } : { x: dx, y: dy };
+  const polygonDrag = dragState;
+  const totalDelta = {
+    x: currentWorld.x - polygonDrag.lastWorld.x,
+    y: currentWorld.y - polygonDrag.lastWorld.y,
+  };
+  const roundedDelta = {
+    x: Math.round(totalDelta.x),
+    y: Math.round(totalDelta.y),
+  };
 
-  if (delta.x === 0 && delta.y === 0) {
+  const movingIds = new Set(polygonIds);
+  const referencePolygonId = polygonIds.find((polygonId) => polygonDrag.originalVertices.has(polygonId) && polygonDrag.originalAnchors.has(polygonId));
+  if (!referencePolygonId) {
     return;
   }
 
-  const movingIds = new Set(polygonIds);
+  const referenceVertices = polygonDrag.originalVertices.get(referencePolygonId);
+  const referenceAnchor = polygonDrag.originalAnchors.get(referencePolygonId);
+  if (!referenceVertices || !referenceAnchor) {
+    return;
+  }
+
+  const originalReference = referenceVertices[0];
+  const targetReference = disableSnap
+    ? {
+        x: originalReference.x + roundedDelta.x,
+        y: originalReference.y + roundedDelta.y,
+      }
+    : snapPointRelativeToAnchor(
+        {
+          x: originalReference.x + totalDelta.x,
+          y: originalReference.y + totalDelta.y,
+        },
+        referenceAnchor,
+      );
+  const appliedDelta = {
+    x: targetReference.x - originalReference.x,
+    y: targetReference.y - originalReference.y,
+  };
+
   for (const polygon of documentState.polygons) {
     if (!movingIds.has(polygon.id)) {
       continue;
     }
 
-    const originalVertices = dragState.originalVertices.get(polygon.id);
+    const originalVertices = polygonDrag.originalVertices.get(polygon.id);
     if (!originalVertices) {
       continue;
     }
 
-    polygon.vertices = polygon.vertices.map((vertex) => ({
-      x: vertex.x + delta.x,
-      y: vertex.y + delta.y,
+    polygon.vertices = originalVertices.map((vertex) => ({
+      x: vertex.x + appliedDelta.x,
+      y: vertex.y + appliedDelta.y,
     }));
-
-    if (!disableSnap) {
-      const totalDelta = {
-        x: currentWorld.x - dragState.lastWorld.x,
-        y: currentWorld.y - dragState.lastWorld.y,
-      };
-      polygon.vertices = originalVertices.map((vertex) =>
-        snapPoint({
-          x: vertex.x + totalDelta.x,
-          y: vertex.y + totalDelta.y,
-        }),
-      );
-    }
-  }
-
-  if (disableSnap) {
-    dragState.lastWorld = {
-      x: dragState.lastWorld.x + delta.x,
-      y: dragState.lastWorld.y + delta.y,
-    };
   }
 }
 
@@ -1245,6 +1297,7 @@ gridSizeInput.addEventListener("change", () => {
   documentState.polygons = documentState.polygons.map((polygon) => ({
     ...polygon,
     vertices: polygon.vertices.map(snapPoint),
+    snapAnchor: snapPoint(polygon.snapAnchor),
   }));
   draftVertices = draftVertices.map(snapPoint);
   markChanged("Grid updated.");
