@@ -349,6 +349,11 @@ select {
   cursor: pointer;
 }
 
+.context-button.icon-only {
+  width: 32px;
+  padding: 0;
+}
+
 .context-button:hover {
   border-color: #9aa6b8;
   background: #f8fafc;

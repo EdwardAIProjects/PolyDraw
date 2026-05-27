@@ -104,6 +104,14 @@ const iconSvg = {
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h7v7H5zM12 9h7v7h-7zM8.5 15v2.5H17V16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>',
   ungroup:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h7v7H5zM12 9h7v7h-7zM8.5 17.5H11M14 16h3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  layerUp:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 15h10v4H5zM9 5h10v4H9zM12 15v-4m0 0-3 3m3-3 3 3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  layerDown:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5h10v4H9zM5 15h10v4H5zM12 9v4m0 0-3-3m3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  bringFront:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 14h10v5H5zM9 5h10v5H9zM14 14V8m0 0-3 3m3-3 3 3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  sendBack:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5h10v5H9zM5 14h10v5H5zM10 10v6m0 0-3-3m3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   image:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m4 16 4.5-4.5 4 4L15 13l5 5M8.5 8.5h.01" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   trash:
@@ -267,6 +275,10 @@ app.innerHTML = `
           <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>V</kbd></span><span>Paste selection</span>
           <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>G</kbd></span><span>Group selection</span>
           <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>G</kbd></span><span>Ungroup selection</span>
+          <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>]</kbd></span><span>Move layer up</span>
+          <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>[</kbd></span><span>Move layer down</span>
+          <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>]</kbd></span><span>Bring to front</span>
+          <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>[</kbd></span><span>Send to back</span>
           <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>O</kbd></span><span>Load JSON</span>
           <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>E</kbd></span><span>Export SVG</span>
           <span><kbd>?</kbd> or <kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>/</kbd></span><span>Show shortcuts</span>
@@ -828,6 +840,10 @@ function updateContextActions() {
     <span class="context-label">${label}</span>
     ${groupAction}
     ${ungroupAction}
+    <button class="context-button icon-only" data-context-action="send-back" type="button" title="Send to back">${iconSvg.sendBack}</button>
+    <button class="context-button icon-only" data-context-action="move-layer-down" type="button" title="Move layer down">${iconSvg.layerDown}</button>
+    <button class="context-button icon-only" data-context-action="move-layer-up" type="button" title="Move layer up">${iconSvg.layerUp}</button>
+    <button class="context-button icon-only" data-context-action="bring-front" type="button" title="Bring to front">${iconSvg.bringFront}</button>
     <button class="context-button" data-context-action="copy-selection" type="button" title="Copy selection">${iconSvg.copy}<span>Copy</span></button>
     <button class="context-button" data-context-action="duplicate-selection" type="button" title="Duplicate selection">${iconSvg.duplicate}<span>Duplicate</span></button>
     <button class="context-button danger" data-context-action="delete-selection" type="button" title="Delete selection">${iconSvg.trash}<span>Delete</span></button>
@@ -1015,6 +1031,56 @@ function ungroupSelection() {
   updateContextActions();
   markChanged("Selection ungrouped.");
   draw();
+}
+
+function moveSelectionLayer(direction: "up" | "down" | "front" | "back") {
+  if (selectedPolygonIds.size === 0) {
+    return;
+  }
+
+  if (direction === "front" || direction === "back") {
+    moveSelectionToLayerEdge(direction);
+  } else {
+    moveSelectionOneLayer(direction);
+  }
+
+  markChanged("Layer order updated.");
+  draw();
+}
+
+function moveSelectionToLayerEdge(edge: "front" | "back") {
+  const selected: PolygonShape[] = [];
+  const unselected: PolygonShape[] = [];
+
+  for (const polygon of documentState.polygons) {
+    if (selectedPolygonIds.has(polygon.id)) {
+      selected.push(polygon);
+    } else {
+      unselected.push(polygon);
+    }
+  }
+
+  documentState.polygons = edge === "front" ? [...unselected, ...selected] : [...selected, ...unselected];
+}
+
+function moveSelectionOneLayer(direction: "up" | "down") {
+  const polygons = [...documentState.polygons];
+
+  if (direction === "up") {
+    for (let index = polygons.length - 2; index >= 0; index -= 1) {
+      if (selectedPolygonIds.has(polygons[index].id) && !selectedPolygonIds.has(polygons[index + 1].id)) {
+        [polygons[index], polygons[index + 1]] = [polygons[index + 1], polygons[index]];
+      }
+    }
+  } else {
+    for (let index = 1; index < polygons.length; index += 1) {
+      if (selectedPolygonIds.has(polygons[index].id) && !selectedPolygonIds.has(polygons[index - 1].id)) {
+        [polygons[index], polygons[index - 1]] = [polygons[index - 1], polygons[index]];
+      }
+    }
+  }
+
+  documentState.polygons = polygons;
 }
 
 function syncCanvasCursor() {
@@ -1701,6 +1767,14 @@ contextActions.addEventListener("click", (event) => {
     groupSelection();
   } else if (action === "ungroup-selection") {
     ungroupSelection();
+  } else if (action === "bring-front") {
+    moveSelectionLayer("front");
+  } else if (action === "send-back") {
+    moveSelectionLayer("back");
+  } else if (action === "move-layer-up") {
+    moveSelectionLayer("up");
+  } else if (action === "move-layer-down") {
+    moveSelectionLayer("down");
   } else if (action === "delete-selection") {
     deleteSelection();
   } else if (action === "delete-vertex") {
@@ -1885,6 +1959,18 @@ window.addEventListener("keydown", (event) => {
     } else {
       groupSelection();
     }
+    return;
+  }
+
+  if (isCommand && event.key === "]") {
+    event.preventDefault();
+    moveSelectionLayer(event.shiftKey ? "front" : "up");
+    return;
+  }
+
+  if (isCommand && event.key === "[") {
+    event.preventDefault();
+    moveSelectionLayer(event.shiftKey ? "back" : "down");
     return;
   }
 
