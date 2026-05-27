@@ -54,10 +54,12 @@ type DragState =
     };
 
 const STORAGE_KEY = "polydraw.document.v1";
+const VIEWPORT_STORAGE_KEY = "polydraw.viewport.v1";
 const MIN_GRID = 4;
 const MAX_GRID = 240;
 const MIN_ZOOM = 0.12;
 const MAX_ZOOM = 6;
+const MAX_CENTER_ZOOM = 1;
 const DEFAULT_FILL = "#5b8def";
 const DEFAULT_STROKE = "#20232d";
 
@@ -78,6 +80,8 @@ const iconSvg = {
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 11v6m4-6v6M9 7l1-3h4l1 3m-8 0 1 13h8l1-13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   target:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v3m0 12v3M3 12h3m12 0h3M7 12a5 5 0 1 0 10 0 5 5 0 0 0-10 0Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+  home:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 11 8-7 8 7M6.5 10v9h11v-9M10 19v-5h4v5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   plus:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
   minus:
@@ -199,6 +203,7 @@ app.innerHTML = `
           <button class="icon-button" id="zoomOut" type="button" title="Zoom out">${iconSvg.minus}</button>
           <button class="icon-button" id="zoomIn" type="button" title="Zoom in">${iconSvg.plus}</button>
           <button class="icon-button" id="centerView" type="button" title="Center drawing">${iconSvg.target}</button>
+          <button class="icon-button" id="resetView" type="button" title="Reset camera">${iconSvg.home}</button>
         </div>
       </div>
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
@@ -218,6 +223,7 @@ app.innerHTML = `
           <span><kbd>Shift</kbd> + drag</span><span>Add to selection</span>
           <span><kbd>+</kbd> / <kbd>-</kbd></span><span>Zoom</span>
           <span><kbd>0</kbd></span><span>Center view</span>
+          <span><kbd>1</kbd></span><span>Reset camera</span>
           <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>S</kbd></span><span>Save in browser</span>
           <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>S</kbd></span><span>Save JSON</span>
           <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>O</kbd></span><span>Load JSON</span>
@@ -324,6 +330,39 @@ function saveDocument() {
   saveStatus.textContent = "Saved";
   saveStatus.style.color = "#2f6f4f";
   updateReadouts();
+}
+
+function loadViewport(): boolean {
+  const stored = window.localStorage.getItem(VIEWPORT_STORAGE_KEY);
+  if (!stored) {
+    return false;
+  }
+
+  try {
+    const parsed = JSON.parse(stored);
+    if (!isRecord(parsed)) {
+      return false;
+    }
+
+    const nextViewport = {
+      x: Number(parsed.x),
+      y: Number(parsed.y),
+      scale: clamp(Number(parsed.scale), MIN_ZOOM, MAX_ZOOM),
+    };
+
+    if (!Number.isFinite(nextViewport.x) || !Number.isFinite(nextViewport.y)) {
+      return false;
+    }
+
+    viewport = nextViewport;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function saveViewport() {
+  window.localStorage.setItem(VIEWPORT_STORAGE_KEY, JSON.stringify(viewport));
 }
 
 function markChanged(message?: string) {
@@ -895,6 +934,7 @@ function zoomAt(screenPoint: Point, factor: number) {
   viewport.scale = clamp(viewport.scale * factor, MIN_ZOOM, MAX_ZOOM);
   viewport.x = screenPoint.x - before.x * viewport.scale;
   viewport.y = screenPoint.y - before.y * viewport.scale;
+  saveViewport();
   draw();
 }
 
@@ -905,6 +945,7 @@ function centerView() {
 
   if (!bounds) {
     viewport = { x: width / 2, y: height / 2, scale: 1 };
+    saveViewport();
     draw();
     return;
   }
@@ -912,10 +953,22 @@ function centerView() {
   const padding = 80;
   const boundsWidth = Math.max(documentState.gridSize, bounds.maxX - bounds.minX);
   const boundsHeight = Math.max(documentState.gridSize, bounds.maxY - bounds.minY);
-  viewport.scale = clamp(Math.min((width - padding * 2) / boundsWidth, (height - padding * 2) / boundsHeight), MIN_ZOOM, MAX_ZOOM);
+  viewport.scale = clamp(Math.min((width - padding * 2) / boundsWidth, (height - padding * 2) / boundsHeight), MIN_ZOOM, MAX_CENTER_ZOOM);
   viewport.x = width / 2 - ((bounds.minX + bounds.maxX) / 2) * viewport.scale;
   viewport.y = height / 2 - ((bounds.minY + bounds.maxY) / 2) * viewport.scale;
+  saveViewport();
   draw();
+}
+
+function resetView() {
+  viewport = {
+    x: canvas.clientWidth / 2,
+    y: canvas.clientHeight / 2,
+    scale: 1,
+  };
+  saveViewport();
+  draw();
+  showToast("Camera reset.");
 }
 
 function getDocumentBounds(): { minX: number; minY: number; maxX: number; maxY: number } | null {
@@ -1112,6 +1165,7 @@ mustQuery<HTMLButtonElement>("#clearAll").addEventListener("click", () => {
 mustQuery<HTMLButtonElement>("#zoomIn").addEventListener("click", () => zoomAt({ x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 }, 1.18));
 mustQuery<HTMLButtonElement>("#zoomOut").addEventListener("click", () => zoomAt({ x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 }, 1 / 1.18));
 mustQuery<HTMLButtonElement>("#centerView").addEventListener("click", centerView);
+mustQuery<HTMLButtonElement>("#resetView").addEventListener("click", resetView);
 mustQuery<HTMLButtonElement>("#showShortcuts").addEventListener("click", showShortcuts);
 mustQuery<HTMLButtonElement>("#closeShortcuts").addEventListener("click", closeShortcuts);
 
@@ -1190,6 +1244,8 @@ canvas.addEventListener("pointerup", () => {
     markChanged();
   } else if (dragState?.kind === "marquee") {
     selectByMarquee(dragState);
+  } else if (dragState?.kind === "pan") {
+    saveViewport();
   }
   dragState = null;
   syncCanvasCursor();
@@ -1197,6 +1253,9 @@ canvas.addEventListener("pointerup", () => {
 });
 
 canvas.addEventListener("pointercancel", () => {
+  if (dragState?.kind === "pan") {
+    saveViewport();
+  }
   dragState = null;
   syncCanvasCursor();
   draw();
@@ -1293,6 +1352,12 @@ window.addEventListener("keydown", (event) => {
     return;
   }
 
+  if (event.key === "1") {
+    event.preventDefault();
+    resetView();
+    return;
+  }
+
   if (event.code === "Space" && !event.repeat) {
     event.preventDefault();
     spaceIsDown = true;
@@ -1329,5 +1394,9 @@ window.addEventListener("keyup", (event) => {
 window.addEventListener("resize", resizeCanvas);
 
 resizeCanvas();
-centerView();
+if (!loadViewport()) {
+  centerView();
+} else {
+  draw();
+}
 setMode("draw");
