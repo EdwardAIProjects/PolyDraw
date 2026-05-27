@@ -1183,6 +1183,12 @@ shortcutDialog.addEventListener("click", (event) => {
 });
 
 canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+canvas.addEventListener("auxclick", (event) => event.preventDefault());
+canvas.addEventListener("mousedown", (event) => {
+  if (event.button === 1) {
+    event.preventDefault();
+  }
+});
 
 canvas.addEventListener("pointerdown", (event) => {
   canvas.setPointerCapture(event.pointerId);
@@ -1191,6 +1197,7 @@ canvas.addEventListener("pointerdown", (event) => {
   lastPointerSnap = snapPoint(lastPointerWorld);
 
   if (event.button === 1 || event.button === 2 || spaceIsDown || mode === "pan") {
+    event.preventDefault();
     dragState = {
       kind: "pan",
       startX: event.clientX,
