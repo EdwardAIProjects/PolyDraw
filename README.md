@@ -39,3 +39,20 @@ Preview the production build:
 ```bash
 npm run preview
 ```
+
+## Docker
+
+Build and run the image:
+
+```bash
+docker build -t polydraw .
+docker run --rm -p 8080:80 polydraw
+```
+
+Or use the example Compose file:
+
+```bash
+docker compose -f docker-compose.example.yml up --build
+```
+
+Then open `http://localhost:8080`.
