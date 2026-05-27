@@ -728,7 +728,6 @@ function finishDraft() {
   setSelection([polygon.id], polygon.id);
   draftVertices = [];
   markChanged("Polygon added.");
-  setMode("select");
   draw();
 }
 
