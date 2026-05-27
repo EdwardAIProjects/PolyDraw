@@ -95,12 +95,18 @@ const iconSvg = {
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   upload:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21V9m0 0 4 4m-4-4-4 4M5 5h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  copy:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h11v11H8zM5 16V5h11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>',
+  duplicate:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h11v11H8zM5 16V5h11M13.5 11v5M11 13.5h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   image:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m4 16 4.5-4.5 4 4L15 13l5 5M8.5 8.5h.01" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   trash:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 11v6m4-6v6M9 7l1-3h4l1 3m-8 0 1 13h8l1-13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   target:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v3m0 12v3M3 12h3m12 0h3M7 12a5 5 0 1 0 10 0 5 5 0 0 0-10 0Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+  magnet:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v8a5 5 0 0 0 10 0V4M7 8h4m2 0h4M7 4h4m2 0h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   home:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 11 8-7 8 7M6.5 10v9h11v-9M10 19v-5h4v5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   plus:
@@ -222,6 +228,7 @@ app.innerHTML = `
           <span class="readout-item" id="zoomReadout">100%</span>
           <span class="readout-item" id="countReadout">0 polygons</span>
         </div>
+        <div class="context-actions" id="contextActions" hidden></div>
         <div class="quick-actions">
           <button class="icon-button" id="showShortcuts" type="button" title="Keyboard shortcuts">${iconSvg.keyboard}</button>
           <button class="icon-button" id="zoomOut" type="button" title="Zoom out">${iconSvg.minus}</button>
@@ -253,6 +260,8 @@ app.innerHTML = `
           <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>S</kbd></span><span>Save JSON</span>
           <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>C</kbd></span><span>Copy selection</span>
           <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>V</kbd></span><span>Paste selection</span>
+          <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>G</kbd></span><span>Group selection</span>
+          <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>G</kbd></span><span>Ungroup selection</span>
           <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>O</kbd></span><span>Load JSON</span>
           <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>E</kbd></span><span>Export SVG</span>
           <span><kbd>?</kbd> or <kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>/</kbd></span><span>Show shortcuts</span>
@@ -281,6 +290,7 @@ const saveStatus = mustQuery<HTMLSpanElement>("#saveStatus");
 const coordinateReadout = mustQuery<HTMLSpanElement>("#coordinateReadout");
 const zoomReadout = mustQuery<HTMLSpanElement>("#zoomReadout");
 const countReadout = mustQuery<HTMLSpanElement>("#countReadout");
+const contextActions = mustQuery<HTMLDivElement>("#contextActions");
 const toast = mustQuery<HTMLDivElement>("#toast");
 const fileInput = mustQuery<HTMLInputElement>("#fileInput");
 const shortcutDialog = mustQuery<HTMLDialogElement>("#shortcutDialog");
@@ -755,12 +765,14 @@ function setSelection(ids: string[], primaryId = ids[0] ?? null) {
   selectedPolygonId = primaryId && selectedPolygonIds.has(primaryId) ? primaryId : (ids[0] ?? null);
   selectedVertexIndex = null;
   syncStyleControls();
+  updateContextActions();
 }
 
 function clearSelection() {
   selectedPolygonIds.clear();
   selectedPolygonId = null;
   selectedVertexIndex = null;
+  updateContextActions();
 }
 
 function syncStyleControls() {
@@ -774,6 +786,36 @@ function syncStyleControls() {
   strokeWidthInput.value = String(polygon.strokeWidth);
   opacityInput.value = String(polygon.opacity);
   saveEditorSettings();
+}
+
+function updateContextActions() {
+  const selectedCount = selectedPolygonIds.size;
+
+  if (selectedCount === 0) {
+    contextActions.hidden = true;
+    contextActions.innerHTML = "";
+    return;
+  }
+
+  contextActions.hidden = false;
+
+  if (selectedVertexIndex !== null && selectedPolygonId) {
+    contextActions.innerHTML = `
+      <span class="context-label">Vertex</span>
+      <button class="context-button" data-context-action="snap-vertex" type="button" title="Snap vertex to grid">${iconSvg.magnet}<span>Snap</span></button>
+      <button class="context-button danger" data-context-action="delete-vertex" type="button" title="Delete vertex">${iconSvg.trash}<span>Vertex</span></button>
+      <button class="context-button danger" data-context-action="delete-selection" type="button" title="Delete polygon">${iconSvg.x}<span>Polygon</span></button>
+    `;
+    return;
+  }
+
+  const label = selectedCount === 1 ? "Polygon" : `${selectedCount} selected`;
+  contextActions.innerHTML = `
+    <span class="context-label">${label}</span>
+    <button class="context-button" data-context-action="copy-selection" type="button" title="Copy selection">${iconSvg.copy}<span>Copy</span></button>
+    <button class="context-button" data-context-action="duplicate-selection" type="button" title="Duplicate selection">${iconSvg.duplicate}<span>Duplicate</span></button>
+    <button class="context-button danger" data-context-action="delete-selection" type="button" title="Delete selection">${iconSvg.trash}<span>Delete</span></button>
+  `;
 }
 
 function applyStyleInputsToSelection() {
@@ -814,8 +856,23 @@ function pasteSelection() {
     return;
   }
 
+  const pastedPolygons = pastePolygons(clipboardPolygons, "pasted");
+  clipboardPolygons = pastedPolygons.map(toClipboardPolygon);
+}
+
+function duplicateSelection() {
+  const polygons = getSelectedPolygons();
+  if (polygons.length === 0) {
+    showToast("Select polygons before duplicating.");
+    return;
+  }
+
+  pastePolygons(polygons.map(toClipboardPolygon), "duplicated");
+}
+
+function pastePolygons(polygons: ClipboardPolygon[], actionLabel: "pasted" | "duplicated") {
   const offset = Math.max(16, documentState.gridSize);
-  const pastedPolygons = clipboardPolygons.map((polygon) => ({
+  const pastedPolygons = polygons.map((polygon) => ({
     ...polygon,
     id: createId(),
     snapAnchor: {
@@ -829,13 +886,13 @@ function pasteSelection() {
   }));
 
   documentState.polygons.push(...pastedPolygons);
-  clipboardPolygons = pastedPolygons.map(toClipboardPolygon);
   setSelection(
     pastedPolygons.map((polygon) => polygon.id),
     pastedPolygons[0]?.id ?? null,
   );
-  markChanged(`${pastedPolygons.length} ${pastedPolygons.length === 1 ? "polygon" : "polygons"} pasted.`);
+  markChanged(`${pastedPolygons.length} ${pastedPolygons.length === 1 ? "polygon" : "polygons"} ${actionLabel}.`);
   draw();
+  return pastedPolygons;
 }
 
 function toClipboardPolygon(polygon: PolygonShape): ClipboardPolygon {
@@ -847,6 +904,43 @@ function toClipboardPolygon(polygon: PolygonShape): ClipboardPolygon {
     opacity: polygon.opacity,
     strokeWidth: polygon.strokeWidth,
   };
+}
+
+function deleteSelectedVertex() {
+  if (!selectedPolygonId || selectedVertexIndex === null) {
+    return;
+  }
+
+  const polygon = documentState.polygons.find((item) => item.id === selectedPolygonId);
+  if (!polygon) {
+    return;
+  }
+
+  if (polygon.vertices.length <= 3) {
+    showToast("A polygon needs at least three vertices.");
+    return;
+  }
+
+  polygon.vertices.splice(selectedVertexIndex, 1);
+  selectedVertexIndex = null;
+  updateContextActions();
+  markChanged("Vertex deleted.");
+  draw();
+}
+
+function snapSelectedVertex() {
+  if (!selectedPolygonId || selectedVertexIndex === null) {
+    return;
+  }
+
+  const polygon = documentState.polygons.find((item) => item.id === selectedPolygonId);
+  if (!polygon) {
+    return;
+  }
+
+  polygon.vertices[selectedVertexIndex] = snapPoint(polygon.vertices[selectedVertexIndex]);
+  markChanged("Vertex snapped.");
+  draw();
 }
 
 function syncCanvasCursor() {
@@ -918,6 +1012,7 @@ function selectAt(world: Point, additive: boolean) {
   if (vertexHit) {
     setSelection(additive ? toggleId([...selectedPolygonIds], vertexHit.polygon.id) : [vertexHit.polygon.id], vertexHit.polygon.id);
     selectedVertexIndex = vertexHit.vertexIndex;
+    updateContextActions();
     dragState = {
       kind: "vertex",
       polygonId: vertexHit.polygon.id,
@@ -939,6 +1034,7 @@ function selectAt(world: Point, additive: boolean) {
     }
 
     selectedVertexIndex = null;
+    updateContextActions();
     dragState = {
       kind: "polygon",
       polygonIds: [...selectedPolygonIds],
@@ -1410,6 +1506,26 @@ mustQuery<HTMLButtonElement>("#resetView").addEventListener("click", resetView);
 mustQuery<HTMLButtonElement>("#showShortcuts").addEventListener("click", showShortcuts);
 mustQuery<HTMLButtonElement>("#closeShortcuts").addEventListener("click", closeShortcuts);
 
+contextActions.addEventListener("click", (event) => {
+  const button = (event.target as Element).closest<HTMLButtonElement>("[data-context-action]");
+  if (!button) {
+    return;
+  }
+
+  const action = button.dataset.contextAction;
+  if (action === "copy-selection") {
+    copySelection();
+  } else if (action === "duplicate-selection") {
+    duplicateSelection();
+  } else if (action === "delete-selection") {
+    deleteSelection();
+  } else if (action === "delete-vertex") {
+    deleteSelectedVertex();
+  } else if (action === "snap-vertex") {
+    snapSelectedVertex();
+  }
+});
+
 fileInput.addEventListener("change", () => {
   const file = fileInput.files?.[0];
   if (file) {
@@ -1575,6 +1691,16 @@ window.addEventListener("keydown", (event) => {
   if (isCommand && key === "v") {
     event.preventDefault();
     pasteSelection();
+    return;
+  }
+
+  if (isCommand && key === "g") {
+    event.preventDefault();
+    if (event.shiftKey) {
+      ungroupSelection();
+    } else {
+      groupSelection();
+    }
     return;
   }
 
