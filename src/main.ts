@@ -31,6 +31,14 @@ type Viewport = {
   scale: number;
 };
 
+type EditorSettings = {
+  mode: ToolMode;
+  fill: string;
+  stroke: string;
+  strokeWidth: number;
+  opacity: number;
+};
+
 type DragState =
   | {
       kind: "pan";
@@ -60,6 +68,7 @@ type DragState =
 
 const STORAGE_KEY = "polydraw.document.v1";
 const VIEWPORT_STORAGE_KEY = "polydraw.viewport.v1";
+const EDITOR_SETTINGS_STORAGE_KEY = "polydraw.editorSettings.v1";
 const MIN_GRID = 4;
 const MAX_GRID = 240;
 const MIN_ZOOM = 0.12;
@@ -67,6 +76,13 @@ const MAX_ZOOM = 6;
 const MAX_CENTER_ZOOM = 1;
 const DEFAULT_FILL = "#5b8def";
 const DEFAULT_STROKE = "#20232d";
+const defaultEditorSettings: EditorSettings = {
+  mode: "draw",
+  fill: DEFAULT_FILL,
+  stroke: DEFAULT_STROKE,
+  strokeWidth: 2,
+  opacity: 0.82,
+};
 
 const iconSvg = {
   cursor:
@@ -106,7 +122,8 @@ const initialDocument: DrawingFile = {
 };
 
 let documentState = loadDocument();
-let mode: ToolMode = "draw";
+let editorSettings = loadEditorSettings();
+let mode: ToolMode = editorSettings.mode;
 let viewport: Viewport = { x: 0, y: 0, scale: 1 };
 let dpr = window.devicePixelRatio || 1;
 let draftVertices: Point[] = [];
@@ -138,9 +155,9 @@ app.innerHTML = `
       <section class="panel" aria-label="Tools">
         <h2 class="panel-title">Tool</h2>
         <div class="segmented">
-          <button class="tool-button active" data-tool="draw" type="button" title="Draw polygon">${iconSvg.polygon}<span>Draw</span></button>
-          <button class="tool-button" data-tool="select" type="button" title="Select and edit">${iconSvg.cursor}<span>Select</span></button>
-          <button class="tool-button" data-tool="pan" type="button" title="Pan canvas">${iconSvg.hand}<span>Pan</span></button>
+          <button class="tool-button ${mode === "draw" ? "active" : ""}" data-tool="draw" type="button" title="Draw polygon">${iconSvg.polygon}<span>Draw</span></button>
+          <button class="tool-button ${mode === "select" ? "active" : ""}" data-tool="select" type="button" title="Select and edit">${iconSvg.cursor}<span>Select</span></button>
+          <button class="tool-button ${mode === "pan" ? "active" : ""}" data-tool="pan" type="button" title="Pan canvas">${iconSvg.hand}<span>Pan</span></button>
         </div>
       </section>
 
@@ -159,19 +176,19 @@ app.innerHTML = `
         <div class="form-grid">
           <div class="field">
             <label for="fillColor">Fill</label>
-            <input id="fillColor" type="color" value="${DEFAULT_FILL}" />
+            <input id="fillColor" type="color" value="${editorSettings.fill}" />
           </div>
           <div class="field">
             <label for="strokeColor">Stroke</label>
-            <input id="strokeColor" type="color" value="${DEFAULT_STROKE}" />
+            <input id="strokeColor" type="color" value="${editorSettings.stroke}" />
           </div>
           <div class="field-row">
             <label for="strokeWidth">Stroke width</label>
-            <input id="strokeWidth" type="number" min="0" max="40" step="1" value="2" />
+            <input id="strokeWidth" type="number" min="0" max="40" step="1" value="${editorSettings.strokeWidth}" />
           </div>
           <div class="field-row">
             <label for="opacity">Opacity</label>
-            <input id="opacity" type="number" min="0.05" max="1" step="0.05" value="0.82" />
+            <input id="opacity" type="number" min="0.05" max="1" step="0.05" value="${editorSettings.opacity}" />
           </div>
         </div>
       </section>
@@ -386,6 +403,49 @@ function loadViewport(): boolean {
 
 function saveViewport() {
   window.localStorage.setItem(VIEWPORT_STORAGE_KEY, JSON.stringify(viewport));
+}
+
+function loadEditorSettings(): EditorSettings {
+  const stored = window.localStorage.getItem(EDITOR_SETTINGS_STORAGE_KEY);
+  if (!stored) {
+    return { ...defaultEditorSettings };
+  }
+
+  try {
+    const parsed = JSON.parse(stored);
+    if (!isRecord(parsed)) {
+      return { ...defaultEditorSettings };
+    }
+
+    return {
+      mode: parseToolMode(parsed.mode) ?? defaultEditorSettings.mode,
+      fill: parseColor(parsed.fill) ?? defaultEditorSettings.fill,
+      stroke: parseColor(parsed.stroke) ?? defaultEditorSettings.stroke,
+      strokeWidth: clamp(Number(parsed.strokeWidth), 0, 40),
+      opacity: clamp(Number(parsed.opacity), 0.05, 1),
+    };
+  } catch {
+    return { ...defaultEditorSettings };
+  }
+}
+
+function saveEditorSettings() {
+  editorSettings = {
+    mode,
+    fill: fillColorInput.value,
+    stroke: strokeColorInput.value,
+    strokeWidth: clamp(Number(strokeWidthInput.value), 0, 40),
+    opacity: clamp(Number(opacityInput.value), 0.05, 1),
+  };
+  window.localStorage.setItem(EDITOR_SETTINGS_STORAGE_KEY, JSON.stringify(editorSettings));
+}
+
+function parseToolMode(value: unknown): ToolMode | null {
+  return value === "draw" || value === "select" || value === "pan" ? value : null;
+}
+
+function parseColor(value: unknown): string | null {
+  return typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value) ? value : null;
 }
 
 function markChanged(message?: string) {
@@ -678,6 +738,7 @@ function setMode(nextMode: ToolMode) {
     button.classList.toggle("active", button.dataset.tool === mode);
   });
   syncCanvasCursor();
+  saveEditorSettings();
   draw();
 }
 
@@ -712,6 +773,7 @@ function syncStyleControls() {
   strokeColorInput.value = polygon.stroke;
   strokeWidthInput.value = String(polygon.strokeWidth);
   opacityInput.value = String(polygon.opacity);
+  saveEditorSettings();
 }
 
 function applyStyleInputsToSelection() {
@@ -730,6 +792,7 @@ function applyStyleInputsToSelection() {
   }
   strokeWidthInput.value = String(strokeWidth);
   opacityInput.value = String(opacity);
+  saveEditorSettings();
   markChanged();
   draw();
 }
@@ -1304,10 +1367,22 @@ gridSizeInput.addEventListener("change", () => {
   draw();
 });
 
-fillColorInput.addEventListener("input", applyStyleInputsToSelection);
-strokeColorInput.addEventListener("input", applyStyleInputsToSelection);
-strokeWidthInput.addEventListener("change", applyStyleInputsToSelection);
-opacityInput.addEventListener("change", applyStyleInputsToSelection);
+fillColorInput.addEventListener("input", () => {
+  saveEditorSettings();
+  applyStyleInputsToSelection();
+});
+strokeColorInput.addEventListener("input", () => {
+  saveEditorSettings();
+  applyStyleInputsToSelection();
+});
+strokeWidthInput.addEventListener("change", () => {
+  saveEditorSettings();
+  applyStyleInputsToSelection();
+});
+opacityInput.addEventListener("change", () => {
+  saveEditorSettings();
+  applyStyleInputsToSelection();
+});
 
 mustQuery<HTMLButtonElement>("#finishDraft").addEventListener("click", finishDraft);
 mustQuery<HTMLButtonElement>("#cancelDraft").addEventListener("click", cancelDraft);
@@ -1596,4 +1671,4 @@ if (!loadViewport()) {
 } else {
   draw();
 }
-setMode("draw");
+setMode(mode);
