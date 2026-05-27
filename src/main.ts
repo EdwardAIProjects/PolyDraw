@@ -9,6 +9,7 @@ type Point = {
 
 type PolygonShape = {
   id: string;
+  groupId?: string;
   vertices: Point[];
   snapAnchor: Point;
   fill: string;
@@ -99,6 +100,10 @@ const iconSvg = {
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h11v11H8zM5 16V5h11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>',
   duplicate:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h11v11H8zM5 16V5h11M13.5 11v5M11 13.5h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  group:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h7v7H5zM12 9h7v7h-7zM8.5 15v2.5H17V16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>',
+  ungroup:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h7v7H5zM12 9h7v7h-7zM8.5 17.5H11M14 16h3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   image:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m4 16 4.5-4.5 4 4L15 13l5 5M8.5 8.5h.01" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   trash:
@@ -343,6 +348,7 @@ function parseDrawingFile(value: unknown): DrawingFile {
 
     return {
       id: typeof polygon.id === "string" ? polygon.id : createId(),
+      groupId: typeof polygon.groupId === "string" ? polygon.groupId : undefined,
       vertices,
       snapAnchor: parsePoint(polygon.snapAnchor) ?? vertices[0],
       fill: typeof polygon.fill === "string" ? polygon.fill : DEFAULT_FILL,
@@ -790,6 +796,8 @@ function syncStyleControls() {
 
 function updateContextActions() {
   const selectedCount = selectedPolygonIds.size;
+  const selectedPolygons = getSelectedPolygons();
+  const hasGroupedSelection = selectedPolygons.some((polygon) => polygon.groupId);
 
   if (selectedCount === 0) {
     contextActions.hidden = true;
@@ -810,8 +818,16 @@ function updateContextActions() {
   }
 
   const label = selectedCount === 1 ? "Polygon" : `${selectedCount} selected`;
+  const groupAction = selectedCount > 1
+    ? `<button class="context-button" data-context-action="group-selection" type="button" title="Group selection">${iconSvg.group}<span>Group</span></button>`
+    : "";
+  const ungroupAction = hasGroupedSelection
+    ? `<button class="context-button" data-context-action="ungroup-selection" type="button" title="Ungroup selection">${iconSvg.ungroup}<span>Ungroup</span></button>`
+    : "";
   contextActions.innerHTML = `
     <span class="context-label">${label}</span>
+    ${groupAction}
+    ${ungroupAction}
     <button class="context-button" data-context-action="copy-selection" type="button" title="Copy selection">${iconSvg.copy}<span>Copy</span></button>
     <button class="context-button" data-context-action="duplicate-selection" type="button" title="Duplicate selection">${iconSvg.duplicate}<span>Duplicate</span></button>
     <button class="context-button danger" data-context-action="delete-selection" type="button" title="Delete selection">${iconSvg.trash}<span>Delete</span></button>
@@ -872,9 +888,11 @@ function duplicateSelection() {
 
 function pastePolygons(polygons: ClipboardPolygon[], actionLabel: "pasted" | "duplicated") {
   const offset = Math.max(16, documentState.gridSize);
+  const groupIdMap = new Map<string, string>();
   const pastedPolygons = polygons.map((polygon) => ({
     ...polygon,
     id: createId(),
+    groupId: remapGroupId(polygon.groupId, groupIdMap),
     snapAnchor: {
       x: polygon.snapAnchor.x + offset,
       y: polygon.snapAnchor.y + offset,
@@ -895,8 +913,24 @@ function pastePolygons(polygons: ClipboardPolygon[], actionLabel: "pasted" | "du
   return pastedPolygons;
 }
 
+function remapGroupId(groupId: string | undefined, groupIdMap: Map<string, string>): string | undefined {
+  if (!groupId) {
+    return undefined;
+  }
+
+  const mappedGroupId = groupIdMap.get(groupId);
+  if (mappedGroupId) {
+    return mappedGroupId;
+  }
+
+  const nextGroupId = createId();
+  groupIdMap.set(groupId, nextGroupId);
+  return nextGroupId;
+}
+
 function toClipboardPolygon(polygon: PolygonShape): ClipboardPolygon {
   return {
+    groupId: polygon.groupId,
     vertices: polygon.vertices.map((vertex) => ({ ...vertex })),
     snapAnchor: { ...polygon.snapAnchor },
     fill: polygon.fill,
@@ -940,6 +974,46 @@ function snapSelectedVertex() {
 
   polygon.vertices[selectedVertexIndex] = snapPoint(polygon.vertices[selectedVertexIndex]);
   markChanged("Vertex snapped.");
+  draw();
+}
+
+function groupSelection() {
+  const polygons = getSelectedPolygons();
+  if (polygons.length < 2) {
+    showToast("Select at least two polygons to group.");
+    return;
+  }
+
+  const groupId = createId();
+  for (const polygon of polygons) {
+    polygon.groupId = groupId;
+  }
+  updateContextActions();
+  markChanged("Selection grouped.");
+  draw();
+}
+
+function ungroupSelection() {
+  const polygons = getSelectedPolygons();
+  if (polygons.length === 0) {
+    return;
+  }
+
+  let changed = false;
+  for (const polygon of polygons) {
+    if (polygon.groupId) {
+      polygon.groupId = undefined;
+      changed = true;
+    }
+  }
+
+  if (!changed) {
+    showToast("Selection is not grouped.");
+    return;
+  }
+
+  updateContextActions();
+  markChanged("Selection ungrouped.");
   draw();
 }
 
@@ -1010,7 +1084,8 @@ function cancelDraft() {
 function selectAt(world: Point, additive: boolean) {
   const vertexHit = findVertexHit(world);
   if (vertexHit) {
-    setSelection(additive ? toggleId([...selectedPolygonIds], vertexHit.polygon.id) : [vertexHit.polygon.id], vertexHit.polygon.id);
+    const polygonIds = getSelectionIdsForPolygon(vertexHit.polygon);
+    setSelection(additive ? toggleIds([...selectedPolygonIds], polygonIds) : polygonIds, vertexHit.polygon.id);
     selectedVertexIndex = vertexHit.vertexIndex;
     updateContextActions();
     dragState = {
@@ -1023,10 +1098,11 @@ function selectAt(world: Point, additive: boolean) {
 
   const polygon = findPolygonHit(world);
   if (polygon) {
+    const polygonIds = getSelectionIdsForPolygon(polygon);
     if (additive) {
-      setSelection(toggleId([...selectedPolygonIds], polygon.id), polygon.id);
+      setSelection(toggleIds([...selectedPolygonIds], polygonIds), polygon.id);
     } else if (!selectedPolygonIds.has(polygon.id)) {
-      setSelection([polygon.id], polygon.id);
+      setSelection(polygonIds, polygon.id);
     } else {
       selectedPolygonId = polygon.id;
       selectedVertexIndex = null;
@@ -1111,7 +1187,8 @@ function selectByMarquee(marquee: Extract<DragState, { kind: "marquee" }>) {
   const containedIds = documentState.polygons
     .filter((polygon) => polygon.vertices.every((vertex) => isPointInsideSelectionBounds(vertex, bounds)))
     .map((polygon) => polygon.id);
-  const nextIds = marquee.additive ? [...new Set([...selectedPolygonIds, ...containedIds])] : containedIds;
+  const expandedContainedIds = expandGroupedIds(containedIds);
+  const nextIds = marquee.additive ? [...new Set([...selectedPolygonIds, ...expandedContainedIds])] : expandedContainedIds;
   setSelection(nextIds);
 }
 
@@ -1128,8 +1205,38 @@ function normalizeBounds(a: Point, b: Point): { minX: number; minY: number; maxX
   };
 }
 
-function toggleId(ids: string[], id: string): string[] {
-  return ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id];
+function getSelectionIdsForPolygon(polygon: PolygonShape): string[] {
+  if (!polygon.groupId) {
+    return [polygon.id];
+  }
+  return documentState.polygons.filter((item) => item.groupId === polygon.groupId).map((item) => item.id);
+}
+
+function toggleIds(ids: string[], toggledIds: string[]): string[] {
+  const nextIds = new Set(ids);
+  const shouldRemove = toggledIds.every((id) => nextIds.has(id));
+  for (const id of toggledIds) {
+    if (shouldRemove) {
+      nextIds.delete(id);
+    } else {
+      nextIds.add(id);
+    }
+  }
+  return [...nextIds];
+}
+
+function expandGroupedIds(ids: string[]): string[] {
+  const nextIds = new Set(ids);
+  for (const polygon of documentState.polygons) {
+    if (nextIds.has(polygon.id) && polygon.groupId) {
+      for (const groupedPolygon of documentState.polygons) {
+        if (groupedPolygon.groupId === polygon.groupId) {
+          nextIds.add(groupedPolygon.id);
+        }
+      }
+    }
+  }
+  return [...nextIds];
 }
 
 function capturePolygonVertices(polygonIds: string[]): Map<string, Point[]> {
@@ -1517,6 +1624,10 @@ contextActions.addEventListener("click", (event) => {
     copySelection();
   } else if (action === "duplicate-selection") {
     duplicateSelection();
+  } else if (action === "group-selection") {
+    groupSelection();
+  } else if (action === "ungroup-selection") {
+    ungroupSelection();
   } else if (action === "delete-selection") {
     deleteSelection();
   } else if (action === "delete-vertex") {
