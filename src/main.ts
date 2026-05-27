@@ -1185,7 +1185,7 @@ function selectByMarquee(marquee: Extract<DragState, { kind: "marquee" }>) {
   }
 
   const containedIds = documentState.polygons
-    .filter((polygon) => polygon.vertices.every((vertex) => isPointInsideSelectionBounds(vertex, bounds)))
+    .filter((polygon) => polygonIntersectsSelectionBounds(polygon.vertices, bounds))
     .map((polygon) => polygon.id);
   const expandedContainedIds = expandGroupedIds(containedIds);
   const nextIds = marquee.additive ? [...new Set([...selectedPolygonIds, ...expandedContainedIds])] : expandedContainedIds;
@@ -1194,6 +1194,79 @@ function selectByMarquee(marquee: Extract<DragState, { kind: "marquee" }>) {
 
 function isPointInsideSelectionBounds(point: Point, bounds: { minX: number; minY: number; maxX: number; maxY: number }): boolean {
   return point.x >= bounds.minX && point.x <= bounds.maxX && point.y >= bounds.minY && point.y <= bounds.maxY;
+}
+
+function polygonIntersectsSelectionBounds(vertices: Point[], bounds: { minX: number; minY: number; maxX: number; maxY: number }): boolean {
+  if (vertices.some((vertex) => isPointInsideSelectionBounds(vertex, bounds))) {
+    return true;
+  }
+
+  const boxCorners = [
+    { x: bounds.minX, y: bounds.minY },
+    { x: bounds.maxX, y: bounds.minY },
+    { x: bounds.maxX, y: bounds.maxY },
+    { x: bounds.minX, y: bounds.maxY },
+  ];
+
+  if (boxCorners.some((corner) => pointInPolygon(corner, vertices))) {
+    return true;
+  }
+
+  const boxEdges: Array<[Point, Point]> = [
+    [boxCorners[0], boxCorners[1]],
+    [boxCorners[1], boxCorners[2]],
+    [boxCorners[2], boxCorners[3]],
+    [boxCorners[3], boxCorners[0]],
+  ];
+
+  for (let index = 0; index < vertices.length; index += 1) {
+    const start = vertices[index];
+    const end = vertices[(index + 1) % vertices.length];
+    if (boxEdges.some(([boxStart, boxEnd]) => segmentsIntersect(start, end, boxStart, boxEnd))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function segmentsIntersect(a: Point, b: Point, c: Point, d: Point): boolean {
+  const directionA = orientation(a, b, c);
+  const directionB = orientation(a, b, d);
+  const directionC = orientation(c, d, a);
+  const directionD = orientation(c, d, b);
+
+  if (directionA === 0 && isPointOnSegment(c, a, b)) {
+    return true;
+  }
+  if (directionB === 0 && isPointOnSegment(d, a, b)) {
+    return true;
+  }
+  if (directionC === 0 && isPointOnSegment(a, c, d)) {
+    return true;
+  }
+  if (directionD === 0 && isPointOnSegment(b, c, d)) {
+    return true;
+  }
+
+  return directionA !== directionB && directionC !== directionD;
+}
+
+function orientation(a: Point, b: Point, c: Point): number {
+  const cross = (b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y);
+  if (Math.abs(cross) < 0.000001) {
+    return 0;
+  }
+  return cross > 0 ? 1 : 2;
+}
+
+function isPointOnSegment(point: Point, start: Point, end: Point): boolean {
+  return (
+    point.x <= Math.max(start.x, end.x) &&
+    point.x >= Math.min(start.x, end.x) &&
+    point.y <= Math.max(start.y, end.y) &&
+    point.y >= Math.min(start.y, end.y)
+  );
 }
 
 function normalizeBounds(a: Point, b: Point): { minX: number; minY: number; maxX: number; maxY: number } {
