@@ -45,6 +45,7 @@ type DragState =
       kind: "polygon";
       polygonIds: string[];
       lastWorld: Point;
+      originalVertices: Map<string, Point[]>;
     }
   | {
       kind: "marquee";
@@ -798,6 +799,7 @@ function selectAt(world: Point, additive: boolean) {
       kind: "polygon",
       polygonIds: [...selectedPolygonIds],
       lastWorld: world,
+      originalVertices: capturePolygonVertices([...selectedPolygonIds]),
     };
     return;
   }
@@ -889,6 +891,20 @@ function toggleId(ids: string[], id: string): string[] {
   return ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id];
 }
 
+function capturePolygonVertices(polygonIds: string[]): Map<string, Point[]> {
+  const idSet = new Set(polygonIds);
+  const vertices = new Map<string, Point[]>();
+  for (const polygon of documentState.polygons) {
+    if (idSet.has(polygon.id)) {
+      vertices.set(
+        polygon.id,
+        polygon.vertices.map((vertex) => ({ ...vertex })),
+      );
+    }
+  }
+  return vertices;
+}
+
 function moveSelectedVertex(point: Point) {
   if (!selectedPolygonId || selectedVertexIndex === null) {
     return;
@@ -909,12 +925,7 @@ function movePolygons(polygonIds: string[], currentWorld: Point, disableSnap: bo
 
   const dx = currentWorld.x - dragState.lastWorld.x;
   const dy = currentWorld.y - dragState.lastWorld.y;
-  const delta = disableSnap
-    ? { x: Math.round(dx), y: Math.round(dy) }
-    : {
-        x: Math.round(dx / documentState.gridSize) * documentState.gridSize,
-        y: Math.round(dy / documentState.gridSize) * documentState.gridSize,
-  };
+  const delta = disableSnap ? { x: Math.round(dx), y: Math.round(dy) } : { x: dx, y: dy };
 
   if (delta.x === 0 && delta.y === 0) {
     return;
@@ -926,16 +937,36 @@ function movePolygons(polygonIds: string[], currentWorld: Point, disableSnap: bo
       continue;
     }
 
+    const originalVertices = dragState.originalVertices.get(polygon.id);
+    if (!originalVertices) {
+      continue;
+    }
+
     polygon.vertices = polygon.vertices.map((vertex) => ({
       x: vertex.x + delta.x,
       y: vertex.y + delta.y,
     }));
+
+    if (!disableSnap) {
+      const totalDelta = {
+        x: currentWorld.x - dragState.lastWorld.x,
+        y: currentWorld.y - dragState.lastWorld.y,
+      };
+      polygon.vertices = originalVertices.map((vertex) =>
+        snapPoint({
+          x: vertex.x + totalDelta.x,
+          y: vertex.y + totalDelta.y,
+        }),
+      );
+    }
   }
 
-  dragState.lastWorld = {
-    x: dragState.lastWorld.x + delta.x,
-    y: dragState.lastWorld.y + delta.y,
-  };
+  if (disableSnap) {
+    dragState.lastWorld = {
+      x: dragState.lastWorld.x + delta.x,
+      y: dragState.lastWorld.y + delta.y,
+    };
+  }
 }
 
 function deleteSelection() {
