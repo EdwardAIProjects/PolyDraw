@@ -86,6 +86,8 @@ const iconSvg = {
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   x:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6 18 18M18 6 6 18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>',
+  keyboard:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16v10H4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M7 10h.01M10 10h.01M13 10h.01M16 10h.01M7 13h.01M10 13h4" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>',
 };
 
 const initialDocument: DrawingFile = {
@@ -193,12 +195,36 @@ app.innerHTML = `
           <span class="readout-item" id="countReadout">0 polygons</span>
         </div>
         <div class="quick-actions">
+          <button class="icon-button" id="showShortcuts" type="button" title="Keyboard shortcuts">${iconSvg.keyboard}</button>
           <button class="icon-button" id="zoomOut" type="button" title="Zoom out">${iconSvg.minus}</button>
           <button class="icon-button" id="zoomIn" type="button" title="Zoom in">${iconSvg.plus}</button>
           <button class="icon-button" id="centerView" type="button" title="Center drawing">${iconSvg.target}</button>
         </div>
       </div>
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
+      <dialog class="shortcut-dialog" id="shortcutDialog" aria-labelledby="shortcutTitle">
+        <div class="shortcut-header">
+          <h2 id="shortcutTitle">Keyboard Shortcuts</h2>
+          <button class="icon-button" id="closeShortcuts" type="button" title="Close shortcuts">${iconSvg.x}</button>
+        </div>
+        <div class="shortcut-grid">
+          <span><kbd>D</kbd></span><span>Draw</span>
+          <span><kbd>V</kbd></span><span>Select</span>
+          <span><kbd>H</kbd></span><span>Pan</span>
+          <span><kbd>Space</kbd></span><span>Temporary pan</span>
+          <span><kbd>Enter</kbd></span><span>Finish polygon</span>
+          <span><kbd>Esc</kbd></span><span>Cancel or clear selection</span>
+          <span><kbd>Delete</kbd></span><span>Delete selection</span>
+          <span><kbd>Shift</kbd> + drag</span><span>Add to selection</span>
+          <span><kbd>+</kbd> / <kbd>-</kbd></span><span>Zoom</span>
+          <span><kbd>0</kbd></span><span>Center view</span>
+          <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>S</kbd></span><span>Save in browser</span>
+          <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>S</kbd></span><span>Save JSON</span>
+          <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>O</kbd></span><span>Load JSON</span>
+          <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>E</kbd></span><span>Export SVG</span>
+          <span><kbd>?</kbd> or <kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>/</kbd></span><span>Show shortcuts</span>
+        </div>
+      </dialog>
     </section>
   </main>
 `;
@@ -224,6 +250,7 @@ const zoomReadout = mustQuery<HTMLSpanElement>("#zoomReadout");
 const countReadout = mustQuery<HTMLSpanElement>("#countReadout");
 const toast = mustQuery<HTMLDivElement>("#toast");
 const fileInput = mustQuery<HTMLInputElement>("#fileInput");
+const shortcutDialog = mustQuery<HTMLDialogElement>("#shortcutDialog");
 
 function mustQuery<T extends Element>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -979,6 +1006,18 @@ function showToast(message: string) {
   }, 2200);
 }
 
+function showShortcuts() {
+  if (!shortcutDialog.open) {
+    shortcutDialog.showModal();
+  }
+}
+
+function closeShortcuts() {
+  if (shortcutDialog.open) {
+    shortcutDialog.close();
+  }
+}
+
 function createId(): string {
   return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
@@ -1019,6 +1058,10 @@ function escapeXml(value: string): string {
         return character;
     }
   });
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target instanceof HTMLButtonElement;
 }
 
 toolButtons.forEach((button) => {
@@ -1069,11 +1112,19 @@ mustQuery<HTMLButtonElement>("#clearAll").addEventListener("click", () => {
 mustQuery<HTMLButtonElement>("#zoomIn").addEventListener("click", () => zoomAt({ x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 }, 1.18));
 mustQuery<HTMLButtonElement>("#zoomOut").addEventListener("click", () => zoomAt({ x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 }, 1 / 1.18));
 mustQuery<HTMLButtonElement>("#centerView").addEventListener("click", centerView);
+mustQuery<HTMLButtonElement>("#showShortcuts").addEventListener("click", showShortcuts);
+mustQuery<HTMLButtonElement>("#closeShortcuts").addEventListener("click", closeShortcuts);
 
 fileInput.addEventListener("change", () => {
   const file = fileInput.files?.[0];
   if (file) {
     void importJson(file);
+  }
+});
+
+shortcutDialog.addEventListener("click", (event) => {
+  if (event.target === shortcutDialog) {
+    closeShortcuts();
   }
 });
 
@@ -1162,7 +1213,88 @@ canvas.addEventListener(
 );
 
 window.addEventListener("keydown", (event) => {
+  const key = event.key.toLowerCase();
+  const isCommand = event.ctrlKey || event.metaKey;
+
+  if (shortcutDialog.open) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeShortcuts();
+    }
+    return;
+  }
+
+  if ((event.key === "?" && !isCommand) || (isCommand && event.key === "/")) {
+    event.preventDefault();
+    showShortcuts();
+    return;
+  }
+
+  if (isCommand && key === "s") {
+    event.preventDefault();
+    if (event.shiftKey) {
+      exportJson();
+    } else {
+      saveDocument();
+      showToast("Saved in this browser.");
+    }
+    return;
+  }
+
+  if (isCommand && key === "o") {
+    event.preventDefault();
+    fileInput.click();
+    return;
+  }
+
+  if (isCommand && key === "e") {
+    event.preventDefault();
+    exportSvg();
+    return;
+  }
+
+  if (isEditableTarget(event.target)) {
+    return;
+  }
+
+  if (key === "d") {
+    event.preventDefault();
+    setMode("draw");
+    return;
+  }
+
+  if (key === "v") {
+    event.preventDefault();
+    setMode("select");
+    return;
+  }
+
+  if (key === "h") {
+    event.preventDefault();
+    setMode("pan");
+    return;
+  }
+
+  if (event.key === "+" || event.key === "=") {
+    event.preventDefault();
+    zoomAt({ x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 }, 1.18);
+    return;
+  }
+
+  if (event.key === "-" || event.key === "_") {
+    event.preventDefault();
+    zoomAt({ x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 }, 1 / 1.18);
+    return;
+  }
+
+  if (event.key === "0") {
+    event.preventDefault();
+    centerView();
+    return;
+  }
+
   if (event.code === "Space" && !event.repeat) {
+    event.preventDefault();
     spaceIsDown = true;
     syncCanvasCursor();
   }
