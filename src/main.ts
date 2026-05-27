@@ -16,6 +16,8 @@ type PolygonShape = {
   strokeWidth: number;
 };
 
+type ClipboardPolygon = Omit<PolygonShape, "id">;
+
 type DrawingFile = {
   version: 1;
   gridSize: number;
@@ -109,6 +111,7 @@ let draftVertices: Point[] = [];
 let selectedPolygonId: string | null = null;
 let selectedPolygonIds = new Set<string>();
 let selectedVertexIndex: number | null = null;
+let clipboardPolygons: ClipboardPolygon[] = [];
 let dragState: DragState | null = null;
 let lastPointerWorld: Point = { x: 0, y: 0 };
 let lastPointerSnap: Point = { x: 0, y: 0 };
@@ -229,6 +232,8 @@ app.innerHTML = `
           <span><kbd>1</kbd></span><span>Reset camera</span>
           <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>S</kbd></span><span>Save in browser</span>
           <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>S</kbd></span><span>Save JSON</span>
+          <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>C</kbd></span><span>Copy selection</span>
+          <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>V</kbd></span><span>Paste selection</span>
           <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>O</kbd></span><span>Load JSON</span>
           <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>E</kbd></span><span>Export SVG</span>
           <span><kbd>?</kbd> or <kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>/</kbd></span><span>Show shortcuts</span>
@@ -704,6 +709,53 @@ function applyStyleInputsToSelection() {
   opacityInput.value = String(opacity);
   markChanged();
   draw();
+}
+
+function copySelection() {
+  const polygons = getSelectedPolygons();
+  if (polygons.length === 0) {
+    showToast("Select polygons before copying.");
+    return;
+  }
+
+  clipboardPolygons = polygons.map(toClipboardPolygon);
+  showToast(`${clipboardPolygons.length} ${clipboardPolygons.length === 1 ? "polygon" : "polygons"} copied.`);
+}
+
+function pasteSelection() {
+  if (clipboardPolygons.length === 0) {
+    showToast("Nothing copied yet.");
+    return;
+  }
+
+  const offset = Math.max(16, documentState.gridSize);
+  const pastedPolygons = clipboardPolygons.map((polygon) => ({
+    ...polygon,
+    id: createId(),
+    vertices: polygon.vertices.map((vertex) => ({
+      x: vertex.x + offset,
+      y: vertex.y + offset,
+    })),
+  }));
+
+  documentState.polygons.push(...pastedPolygons);
+  clipboardPolygons = pastedPolygons.map(toClipboardPolygon);
+  setSelection(
+    pastedPolygons.map((polygon) => polygon.id),
+    pastedPolygons[0]?.id ?? null,
+  );
+  markChanged(`${pastedPolygons.length} ${pastedPolygons.length === 1 ? "polygon" : "polygons"} pasted.`);
+  draw();
+}
+
+function toClipboardPolygon(polygon: PolygonShape): ClipboardPolygon {
+  return {
+    vertices: polygon.vertices.map((vertex) => ({ ...vertex })),
+    fill: polygon.fill,
+    stroke: polygon.stroke,
+    opacity: polygon.opacity,
+    strokeWidth: polygon.strokeWidth,
+  };
 }
 
 function syncCanvasCursor() {
@@ -1383,6 +1435,18 @@ window.addEventListener("keydown", (event) => {
   }
 
   if (isEditableTarget(event.target)) {
+    return;
+  }
+
+  if (isCommand && key === "c") {
+    event.preventDefault();
+    copySelection();
+    return;
+  }
+
+  if (isCommand && key === "v") {
+    event.preventDefault();
+    pasteSelection();
     return;
   }
 
