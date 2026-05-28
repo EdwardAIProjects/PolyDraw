@@ -2,6 +2,8 @@
 
 PolyDraw is a small TypeScript web app for drawing polygon-based artwork on an infinite grid canvas.
 
+![PolyDraw Demo Screenshot](demo.png)
+
 ## Features
 
 - Infinite canvas with pan and zoom
