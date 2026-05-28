@@ -132,6 +132,8 @@ const iconSvg = {
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6 18 18M18 6 6 18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>',
   keyboard:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16v10H4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M7 10h.01M10 10h.01M13 10h.01M16 10h.01M7 13h.01M10 13h4" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>',
+  list:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
 };
 
 const initialDocument: DrawingFile = {
@@ -248,6 +250,13 @@ app.innerHTML = `
           <button class="icon-button" id="zoomIn" type="button" title="Zoom in">${iconSvg.plus}</button>
           <button class="icon-button" id="centerView" type="button" title="Center drawing">${iconSvg.target}</button>
           <button class="icon-button" id="resetView" type="button" title="Reset camera">${iconSvg.home}</button>
+          <details class="object-list" id="objectList">
+            <summary class="icon-button" title="Object list">${iconSvg.list}</summary>
+            <div class="object-list-panel">
+              <div class="object-list-header">Objects</div>
+              <div class="object-list-items" id="objectListItems"></div>
+            </div>
+          </details>
         </div>
       </div>
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
@@ -308,6 +317,8 @@ const coordinateReadout = mustQuery<HTMLSpanElement>("#coordinateReadout");
 const zoomReadout = mustQuery<HTMLSpanElement>("#zoomReadout");
 const countReadout = mustQuery<HTMLSpanElement>("#countReadout");
 const contextActions = mustQuery<HTMLDivElement>("#contextActions");
+const objectList = mustQuery<HTMLDetailsElement>("#objectList");
+const objectListItems = mustQuery<HTMLDivElement>("#objectListItems");
 const toast = mustQuery<HTMLDivElement>("#toast");
 const fileInput = mustQuery<HTMLInputElement>("#fileInput");
 const shortcutDialog = mustQuery<HTMLDialogElement>("#shortcutDialog");
@@ -570,6 +581,7 @@ function draw() {
 
   drawSnapMarker();
   updateReadouts();
+  updateObjectList();
 }
 
 function drawGrid(width: number, height: number) {
@@ -853,6 +865,31 @@ function updateContextActions() {
     <button class="context-button" data-context-action="duplicate-selection" type="button" title="Duplicate selection">${iconSvg.duplicate}<span>Duplicate</span></button>
     <button class="context-button danger" data-context-action="delete-selection" type="button" title="Delete selection">${iconSvg.trash}<span>Delete</span></button>
   `;
+}
+
+function updateObjectList() {
+  if (documentState.polygons.length === 0) {
+    objectListItems.innerHTML = `<div class="object-list-empty">No objects</div>`;
+    return;
+  }
+
+  objectListItems.innerHTML = documentState.polygons
+    .map((polygon, index) => {
+      const layerNumber = documentState.polygons.length - index;
+      const label = `Polygon ${index + 1}`;
+      const groupLabel = polygon.groupId ? `Group ${polygon.groupId.slice(0, 6)}` : "No group";
+      const selectedClass = selectedPolygonIds.has(polygon.id) ? " selected" : "";
+      return `
+        <button class="object-list-item${selectedClass}" data-object-id="${polygon.id}" type="button">
+          <span class="object-swatch" style="background: ${escapeHtml(polygon.fill)}"></span>
+          <span class="object-list-text">
+            <strong>${label}</strong>
+            <small>${groupLabel} · layer ${layerNumber}</small>
+          </span>
+        </button>
+      `;
+    })
+    .join("");
 }
 
 function applyStyleInputsToSelection() {
@@ -1688,6 +1725,25 @@ function escapeXml(value: string): string {
   });
 }
 
+function escapeHtml(value: string): string {
+  return value.replace(/[<>&"']/g, (character) => {
+    switch (character) {
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case "&":
+        return "&amp;";
+      case '"':
+        return "&quot;";
+      case "'":
+        return "&#39;";
+      default:
+        return character;
+    }
+  });
+}
+
 function isEditableTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target instanceof HTMLButtonElement;
 }
@@ -1801,6 +1857,23 @@ shortcutDialog.addEventListener("click", (event) => {
   if (event.target === shortcutDialog) {
     closeShortcuts();
   }
+});
+
+objectListItems.addEventListener("click", (event) => {
+  const button = (event.target as Element).closest<HTMLButtonElement>("[data-object-id]");
+  if (!button) {
+    return;
+  }
+
+  const polygon = documentState.polygons.find((item) => item.id === button.dataset.objectId);
+  if (!polygon) {
+    return;
+  }
+
+  setSelection(getSelectionIdsForPolygon(polygon), polygon.id);
+  objectList.removeAttribute("open");
+  setMode("select");
+  draw();
 });
 
 canvas.addEventListener("contextmenu", (event) => event.preventDefault());
