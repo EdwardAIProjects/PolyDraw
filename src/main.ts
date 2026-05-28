@@ -105,13 +105,13 @@ const iconSvg = {
   ungroup:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h7v7H5zM12 9h7v7h-7zM8.5 17.5H11M14 16h3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   layerUp:
-    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 15h10v4H5zM9 5h10v4H9zM12 15v-4m0 0-3 3m3-3 3 3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15h8v4H6zM10 5h8v4h-8zM17 17v-5m0 0-2 2m2-2 2 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   layerDown:
-    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5h10v4H9zM5 15h10v4H5zM12 9v4m0 0-3-3m3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 5h8v4h-8zM6 15h8v4H6zM17 12v5m0 0-2-2m2 2 2-2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   bringFront:
-    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 14h10v5H5zM9 5h10v5H9zM14 14V8m0 0-3 3m3-3 3 3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 15h8v4H5zM11 9h8v4h-8zM15 9V4m0 0-3 3m3-3 3 3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   sendBack:
-    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5h10v5H9zM5 14h10v5H5zM10 10v6m0 0-3-3m3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h8v4h-8zM5 11h8v4H5zM9 15v5m0 0-3-3m3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   image:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m4 16 4.5-4.5 4 4L15 13l5 5M8.5 8.5h.01" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   trash:
@@ -840,10 +840,15 @@ function updateContextActions() {
     <span class="context-label">${label}</span>
     ${groupAction}
     ${ungroupAction}
-    <button class="context-button icon-only" data-context-action="send-back" type="button" title="Send to back">${iconSvg.sendBack}</button>
-    <button class="context-button icon-only" data-context-action="move-layer-down" type="button" title="Move layer down">${iconSvg.layerDown}</button>
-    <button class="context-button icon-only" data-context-action="move-layer-up" type="button" title="Move layer up">${iconSvg.layerUp}</button>
-    <button class="context-button icon-only" data-context-action="bring-front" type="button" title="Bring to front">${iconSvg.bringFront}</button>
+    <details class="context-menu">
+      <summary class="context-button">${iconSvg.layerUp}<span>Layer</span></summary>
+      <div class="context-menu-panel">
+        <button data-context-action="bring-front" type="button">${iconSvg.bringFront}<span>Bring to front</span></button>
+        <button data-context-action="move-layer-up" type="button">${iconSvg.layerUp}<span>Move up</span></button>
+        <button data-context-action="move-layer-down" type="button">${iconSvg.layerDown}<span>Move down</span></button>
+        <button data-context-action="send-back" type="button">${iconSvg.sendBack}<span>Send to back</span></button>
+      </div>
+    </details>
     <button class="context-button" data-context-action="copy-selection" type="button" title="Copy selection">${iconSvg.copy}<span>Copy</span></button>
     <button class="context-button" data-context-action="duplicate-selection" type="button" title="Duplicate selection">${iconSvg.duplicate}<span>Duplicate</span></button>
     <button class="context-button danger" data-context-action="delete-selection" type="button" title="Delete selection">${iconSvg.trash}<span>Delete</span></button>
@@ -1758,6 +1763,7 @@ contextActions.addEventListener("click", (event) => {
     return;
   }
 
+  button.closest("details")?.removeAttribute("open");
   const action = button.dataset.contextAction;
   if (action === "copy-selection") {
     copySelection();

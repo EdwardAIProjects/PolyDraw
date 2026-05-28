@@ -354,6 +354,59 @@ select {
   padding: 0;
 }
 
+.context-menu {
+  position: relative;
+}
+
+.context-menu summary {
+  list-style: none;
+}
+
+.context-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.context-menu-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 5;
+  display: grid;
+  min-width: 168px;
+  padding: 5px;
+  border: 1px solid rgba(185, 193, 207, 0.9);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 14px 34px rgba(42, 49, 65, 0.16);
+  backdrop-filter: blur(10px);
+}
+
+.context-menu-panel button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-height: 32px;
+  border: 0;
+  border-radius: 6px;
+  padding: 0 8px;
+  color: #2c3340;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+}
+
+.context-menu-panel button:hover {
+  background: #f1f4f8;
+}
+
+.context-menu-panel svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
 .context-button:hover {
   border-color: #9aa6b8;
   background: #f8fafc;
