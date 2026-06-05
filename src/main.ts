@@ -26,6 +26,23 @@ type DrawingFile = {
   polygons: PolygonShape[];
 };
 
+type BrowserSaveFilePicker = (options: {
+  excludeAcceptAllOption?: boolean;
+  id?: string;
+  startIn?: "desktop" | "documents" | "downloads" | "music" | "pictures" | "videos";
+  suggestedName?: string;
+  types?: Array<{
+    description: string;
+    accept: Record<string, string[]>;
+  }>;
+}) => Promise<{
+  name: string;
+  createWritable: () => Promise<{
+    write: (content: Blob) => Promise<void>;
+    close: () => Promise<void>;
+  }>;
+}>;
+
 type Viewport = {
   x: number;
   y: number;
@@ -80,6 +97,7 @@ type DragState =
 const STORAGE_KEY = "polydraw.document.v1";
 const VIEWPORT_STORAGE_KEY = "polydraw.viewport.v1";
 const EDITOR_SETTINGS_STORAGE_KEY = "polydraw.editorSettings.v1";
+const JSON_FILE_NAME_STORAGE_KEY = "polydraw.jsonFileName.v1";
 const MIN_GRID = 4;
 const MAX_GRID = 240;
 const MIN_ZOOM = 0.12;
@@ -299,7 +317,7 @@ app.innerHTML = `
           <span><kbd>+</kbd> / <kbd>-</kbd></span><span>Zoom</span>
           <span><kbd>0</kbd></span><span>Center view</span>
           <span><kbd>1</kbd></span><span>Reset camera</span>
-          <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>S</kbd></span><span>Save in browser</span>
+          <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>S</kbd></span><span>Save JSON</span>
           <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>S</kbd></span><span>Save JSON</span>
           <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>Z</kbd></span><span>Undo</span>
           <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd></span><span>Redo</span>
@@ -1746,9 +1764,62 @@ function getDocumentBounds(): { minX: number; minY: number; maxX: number; maxY: 
   );
 }
 
-function exportJson() {
-  downloadBlob(JSON.stringify(documentState, null, 2), "polydraw-logo.json", "application/json");
-  showToast("Drawing file saved.");
+async function exportJson() {
+  const content = JSON.stringify(documentState, null, 2);
+  const fileName = await saveJsonFile(content, getSavedJsonFileName());
+  if (fileName === null) {
+    return;
+  }
+
+  saveJsonFileName(fileName);
+  showToast(`Drawing file saved as ${fileName}.`);
+}
+
+async function saveJsonFile(content: string, defaultFileName: string): Promise<string | null> {
+  const blob = new Blob([content], { type: "application/json" });
+  const saveFilePicker = getSaveFilePicker();
+  if (saveFilePicker) {
+    try {
+      const handle = await saveFilePicker({
+        id: "polydraw-json",
+        startIn: "documents",
+        suggestedName: defaultFileName,
+        types: [
+          {
+            description: "PolyDraw JSON",
+            accept: {
+              "application/json": [".json"],
+            },
+          },
+        ],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return handle.name;
+    } catch (error) {
+      if (isAbortError(error)) {
+        return null;
+      }
+      console.error(error);
+    }
+  }
+
+  const fileName = promptForFileName("Save drawing as", defaultFileName, ".json");
+  if (!fileName) {
+    return null;
+  }
+
+  downloadBlob(content, fileName, "application/json");
+  return fileName;
+}
+
+function getSaveFilePicker(): BrowserSaveFilePicker | null {
+  if (!window.isSecureContext || !isTopLevelWindow() || !("showSaveFilePicker" in window)) {
+    return null;
+  }
+
+  return (window as Window & { showSaveFilePicker: BrowserSaveFilePicker }).showSaveFilePicker;
 }
 
 function exportSvg() {
@@ -1787,6 +1858,40 @@ function downloadBlob(content: string, fileName: string, type: string) {
   link.download = fileName;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+function promptForFileName(message: string, defaultFileName: string, extension: string): string | null {
+  const fileName = window.prompt(message, defaultFileName);
+  if (fileName === null) {
+    return null;
+  }
+
+  const trimmedFileName = fileName.trim();
+  if (!trimmedFileName) {
+    return defaultFileName;
+  }
+
+  return trimmedFileName.toLowerCase().endsWith(extension) ? trimmedFileName : `${trimmedFileName}${extension}`;
+}
+
+function getSavedJsonFileName(): string {
+  return window.localStorage.getItem(JSON_FILE_NAME_STORAGE_KEY) || "untitled.json";
+}
+
+function saveJsonFileName(fileName: string) {
+  window.localStorage.setItem(JSON_FILE_NAME_STORAGE_KEY, fileName);
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
+function isTopLevelWindow(): boolean {
+  try {
+    return window.self === window.top;
+  } catch {
+    return false;
+  }
 }
 
 async function importJson(file: File) {
@@ -2141,12 +2246,7 @@ window.addEventListener("keydown", (event) => {
 
   if (isCommand && key === "s") {
     event.preventDefault();
-    if (event.shiftKey) {
-      exportJson();
-    } else {
-      saveDocument();
-      showToast("Saved in this browser.");
-    }
+    void exportJson();
     return;
   }
 
