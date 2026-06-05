@@ -40,6 +40,16 @@ type EditorSettings = {
   opacity: number;
 };
 
+type HistorySnapshot = {
+  document: DrawingFile;
+  draftVertices: Point[];
+  selection: {
+    ids: string[];
+    primaryId: string | null;
+    vertexIndex: number | null;
+  };
+};
+
 type DragState =
   | {
       kind: "pan";
@@ -75,6 +85,7 @@ const MAX_GRID = 240;
 const MIN_ZOOM = 0.12;
 const MAX_ZOOM = 6;
 const MAX_CENTER_ZOOM = 1;
+const HISTORY_LIMIT = 80;
 const DEFAULT_FILL = "#5b8def";
 const DEFAULT_STROKE = "#20232d";
 const defaultEditorSettings: EditorSettings = {
@@ -92,6 +103,10 @@ const iconSvg = {
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 4 10 3 3 9-8 5-8-5 1-9 2-3Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M7 4h.01M17 7h.01M20 16h.01M12 21h.01M4 16h.01" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>',
   hand:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 12V6.5a1.5 1.5 0 0 1 3 0V11m0-4.5a1.5 1.5 0 0 1 3 0V11m0-3.5a1.5 1.5 0 0 1 3 0V13m0-2.5a1.5 1.5 0 0 1 3 0V15c0 4-2.4 6-6.6 6H12a6 6 0 0 1-5.1-2.8l-2.5-4.1A1.7 1.7 0 0 1 7 12l1.8 2.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  undo:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7 4 12l5 5M5 12h9a5 5 0 1 1 0 10h-2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  redo:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 7 5 5-5 5M19 12h-9a5 5 0 1 0 0 10h2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   download:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   upload:
@@ -158,6 +173,10 @@ let lastPointerSnap: Point = { x: 0, y: 0 };
 let snapIsDisabled = false;
 let spaceIsDown = false;
 let toastTimer = 0;
+let undoStack: HistorySnapshot[] = [];
+let redoStack: HistorySnapshot[] = [];
+let lastHistorySnapshot = createHistorySnapshot();
+let lastHistoryKey = serializeHistorySnapshot(lastHistorySnapshot);
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -245,6 +264,8 @@ app.innerHTML = `
         </div>
         <div class="context-actions" id="contextActions" hidden></div>
         <div class="quick-actions">
+          <button class="icon-button" id="undoAction" type="button" title="Undo" disabled>${iconSvg.undo}</button>
+          <button class="icon-button" id="redoAction" type="button" title="Redo" disabled>${iconSvg.redo}</button>
           <button class="icon-button" id="showShortcuts" type="button" title="Keyboard shortcuts">${iconSvg.keyboard}</button>
           <button class="icon-button" id="zoomOut" type="button" title="Zoom out">${iconSvg.minus}</button>
           <button class="icon-button" id="zoomIn" type="button" title="Zoom in">${iconSvg.plus}</button>
@@ -280,6 +301,9 @@ app.innerHTML = `
           <span><kbd>1</kbd></span><span>Reset camera</span>
           <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>S</kbd></span><span>Save in browser</span>
           <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>S</kbd></span><span>Save JSON</span>
+          <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>Z</kbd></span><span>Undo</span>
+          <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd></span><span>Redo</span>
+          <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>Y</kbd></span><span>Redo</span>
           <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>C</kbd></span><span>Copy selection</span>
           <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>V</kbd></span><span>Paste selection</span>
           <span><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>G</kbd></span><span>Group selection</span>
@@ -322,6 +346,8 @@ const objectListItems = mustQuery<HTMLDivElement>("#objectListItems");
 const toast = mustQuery<HTMLDivElement>("#toast");
 const fileInput = mustQuery<HTMLInputElement>("#fileInput");
 const shortcutDialog = mustQuery<HTMLDialogElement>("#shortcutDialog");
+const undoButton = mustQuery<HTMLButtonElement>("#undoAction");
+const redoButton = mustQuery<HTMLButtonElement>("#redoAction");
 
 function mustQuery<T extends Element>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -487,7 +513,118 @@ function parseColor(value: unknown): string | null {
   return typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value) ? value : null;
 }
 
+function createHistorySnapshot(): HistorySnapshot {
+  return {
+    document: structuredClone(documentState),
+    draftVertices: draftVertices.map((vertex) => ({ ...vertex })),
+    selection: {
+      ids: [...selectedPolygonIds],
+      primaryId: selectedPolygonId,
+      vertexIndex: selectedVertexIndex,
+    },
+  };
+}
+
+function serializeHistorySnapshot(snapshot: HistorySnapshot): string {
+  return JSON.stringify({
+    document: snapshot.document,
+    draftVertices: snapshot.draftVertices,
+  });
+}
+
+function recordHistoryBoundary(): boolean {
+  const currentSnapshot = createHistorySnapshot();
+  const currentKey = serializeHistorySnapshot(currentSnapshot);
+  if (currentKey === lastHistoryKey) {
+    lastHistorySnapshot = currentSnapshot;
+    updateHistoryButtons();
+    return false;
+  }
+
+  undoStack.push(structuredClone(lastHistorySnapshot));
+  if (undoStack.length > HISTORY_LIMIT) {
+    undoStack.shift();
+  }
+  redoStack = [];
+  lastHistorySnapshot = currentSnapshot;
+  lastHistoryKey = currentKey;
+  updateHistoryButtons();
+  return true;
+}
+
+function restoreHistorySnapshot(snapshot: HistorySnapshot) {
+  documentState = structuredClone(snapshot.document);
+  gridSizeInput.value = String(documentState.gridSize);
+  draftVertices = snapshot.draftVertices.map((vertex) => ({ ...vertex }));
+  restoreSelection(snapshot);
+  dragState = null;
+  syncCanvasCursor();
+  saveDocument();
+  draw();
+}
+
+function restoreSelection(snapshot: HistorySnapshot) {
+  const polygonIds = new Set(documentState.polygons.map((polygon) => polygon.id));
+  const restoredIds = snapshot.selection.ids.filter((id) => polygonIds.has(id));
+  const primaryId = snapshot.selection.primaryId && polygonIds.has(snapshot.selection.primaryId) ? snapshot.selection.primaryId : (restoredIds[0] ?? null);
+  selectedPolygonIds = new Set(restoredIds);
+  selectedPolygonId = primaryId;
+  selectedVertexIndex = getRestorableVertexIndex(snapshot, primaryId);
+  syncStyleControls();
+  updateContextActions();
+}
+
+function getRestorableVertexIndex(snapshot: HistorySnapshot, polygonId: string | null): number | null {
+  if (!polygonId || snapshot.selection.vertexIndex === null) {
+    return null;
+  }
+
+  const polygon = documentState.polygons.find((item) => item.id === polygonId);
+  if (!polygon || snapshot.selection.vertexIndex < 0 || snapshot.selection.vertexIndex >= polygon.vertices.length) {
+    return null;
+  }
+  return snapshot.selection.vertexIndex;
+}
+
+function undo() {
+  const previousSnapshot = undoStack.pop();
+  if (!previousSnapshot) {
+    showToast("Nothing to undo.");
+    updateHistoryButtons();
+    return;
+  }
+
+  redoStack.push(createHistorySnapshot());
+  restoreHistorySnapshot(previousSnapshot);
+  lastHistorySnapshot = createHistorySnapshot();
+  lastHistoryKey = serializeHistorySnapshot(lastHistorySnapshot);
+  updateHistoryButtons();
+  showToast("Undone.");
+}
+
+function redo() {
+  const nextSnapshot = redoStack.pop();
+  if (!nextSnapshot) {
+    showToast("Nothing to redo.");
+    updateHistoryButtons();
+    return;
+  }
+
+  undoStack.push(createHistorySnapshot());
+  restoreHistorySnapshot(nextSnapshot);
+  lastHistorySnapshot = createHistorySnapshot();
+  lastHistoryKey = serializeHistorySnapshot(lastHistorySnapshot);
+  updateHistoryButtons();
+  showToast("Redone.");
+}
+
+function updateHistoryButtons() {
+  undoButton.disabled = undoStack.length === 0;
+  redoButton.disabled = redoStack.length === 0;
+}
+
 function markChanged(message?: string) {
+  recordHistoryBoundary();
   saveStatus.textContent = "Saving";
   saveStatus.style.color = "#71662c";
   saveDocument();
@@ -1147,6 +1284,7 @@ function addDraftVertex(point: Point) {
 
   draftVertices.push(point);
   clearSelection();
+  recordHistoryBoundary();
   draw();
 }
 
@@ -1187,6 +1325,7 @@ function cancelDraft() {
     return;
   }
   draftVertices = [];
+  recordHistoryBoundary();
   draw();
   showToast("Draft canceled.");
 }
@@ -1657,7 +1796,7 @@ async function importJson(file: File) {
     gridSizeInput.value = String(documentState.gridSize);
     clearSelection();
     draftVertices = [];
-    saveDocument();
+    markChanged();
     centerView();
     showToast("Drawing loaded.");
   } catch (error) {
@@ -1798,6 +1937,8 @@ mustQuery<HTMLButtonElement>("#cancelDraft").addEventListener("click", cancelDra
 mustQuery<HTMLButtonElement>("#saveJson").addEventListener("click", exportJson);
 mustQuery<HTMLButtonElement>("#loadJson").addEventListener("click", () => fileInput.click());
 mustQuery<HTMLButtonElement>("#saveSvg").addEventListener("click", exportSvg);
+undoButton.addEventListener("click", undo);
+redoButton.addEventListener("click", redo);
 mustQuery<HTMLButtonElement>("#clearAll").addEventListener("click", () => {
   if (documentState.polygons.length === 0 && draftVertices.length === 0) {
     return;
@@ -2025,6 +2166,22 @@ window.addEventListener("keydown", (event) => {
     return;
   }
 
+  if (isCommand && key === "z") {
+    event.preventDefault();
+    if (event.shiftKey) {
+      redo();
+    } else {
+      undo();
+    }
+    return;
+  }
+
+  if (isCommand && key === "y") {
+    event.preventDefault();
+    redo();
+    return;
+  }
+
   if (isCommand && key === "c") {
     event.preventDefault();
     copySelection();
@@ -2153,3 +2310,4 @@ if (!loadViewport()) {
   draw();
 }
 setMode(mode);
+updateHistoryButtons();
