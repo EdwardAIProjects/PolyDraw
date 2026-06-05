@@ -646,10 +646,12 @@ function drawPolygon(polygon: PolygonShape, isSelected: boolean) {
   });
   context.closePath();
   context.fillStyle = polygon.fill;
-  context.strokeStyle = polygon.stroke;
-  context.lineWidth = Math.max(1, polygon.strokeWidth * viewport.scale);
   context.fill();
-  context.stroke();
+  if (polygon.strokeWidth > 0) {
+    context.strokeStyle = polygon.stroke;
+    context.lineWidth = Math.max(1, polygon.strokeWidth * viewport.scale);
+    context.stroke();
+  }
   context.restore();
 
   if (isSelected) {
@@ -1625,7 +1627,11 @@ function exportSvg() {
   const polygons = documentState.polygons
     .map((polygon) => {
       const points = polygon.vertices.map((vertex) => `${round(vertex.x)},${round(vertex.y)}`).join(" ");
-      return `  <polygon points="${points}" fill="${escapeXml(polygon.fill)}" stroke="${escapeXml(polygon.stroke)}" stroke-width="${round(polygon.strokeWidth)}" opacity="${round(polygon.opacity)}" />`;
+      const stroke =
+        polygon.strokeWidth > 0
+          ? `stroke="${escapeXml(polygon.stroke)}" stroke-width="${round(polygon.strokeWidth)}"`
+          : `stroke="none"`;
+      return `  <polygon points="${points}" fill="${escapeXml(polygon.fill)}" ${stroke} opacity="${round(polygon.opacity)}" />`;
     })
     .join("\n");
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${round(minX)} ${round(minY)} ${round(width)} ${round(height)}">\n${polygons}\n</svg>\n`;
