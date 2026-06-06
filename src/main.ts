@@ -1776,20 +1776,49 @@ async function exportJson() {
 }
 
 async function saveJsonFile(content: string, defaultFileName: string): Promise<string | null> {
-  const blob = new Blob([content], { type: "application/json" });
+  return saveFile({
+    content,
+    defaultFileName,
+    pickerId: "polydraw-json",
+    pickerDescription: "PolyDraw JSON",
+    pickerAccept: { "application/json": [".json"] },
+    promptMessage: "Save drawing as",
+    extension: ".json",
+    mimeType: "application/json",
+  });
+}
+
+async function saveFile({
+  content,
+  defaultFileName,
+  pickerId,
+  pickerDescription,
+  pickerAccept,
+  promptMessage,
+  extension,
+  mimeType,
+}: {
+  content: string;
+  defaultFileName: string;
+  pickerId: string;
+  pickerDescription: string;
+  pickerAccept: Record<string, string[]>;
+  promptMessage: string;
+  extension: string;
+  mimeType: string;
+}): Promise<string | null> {
+  const blob = new Blob([content], { type: mimeType });
   const saveFilePicker = getSaveFilePicker();
   if (saveFilePicker) {
     try {
       const handle = await saveFilePicker({
-        id: "polydraw-json",
+        id: pickerId,
         startIn: "documents",
         suggestedName: defaultFileName,
         types: [
           {
-            description: "PolyDraw JSON",
-            accept: {
-              "application/json": [".json"],
-            },
+            description: pickerDescription,
+            accept: pickerAccept,
           },
         ],
       });
@@ -1805,12 +1834,12 @@ async function saveJsonFile(content: string, defaultFileName: string): Promise<s
     }
   }
 
-  const fileName = promptForFileName("Save drawing as", defaultFileName, ".json");
+  const fileName = promptForFileName(promptMessage, defaultFileName, extension);
   if (!fileName) {
     return null;
   }
 
-  downloadBlob(content, fileName, "application/json");
+  downloadBlob(content, fileName, mimeType);
   return fileName;
 }
 
@@ -1822,7 +1851,7 @@ function getSaveFilePicker(): BrowserSaveFilePicker | null {
   return (window as Window & { showSaveFilePicker: BrowserSaveFilePicker }).showSaveFilePicker;
 }
 
-function exportSvg() {
+async function exportSvg() {
   const bounds = getDocumentBounds();
   if (!bounds) {
     showToast("Draw at least one polygon before exporting SVG.");
@@ -1846,8 +1875,21 @@ function exportSvg() {
     .join("\n");
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${round(minX)} ${round(minY)} ${round(width)} ${round(height)}">\n${polygons}\n</svg>\n`;
 
-  downloadBlob(svg, "polydraw-logo.svg", "image/svg+xml");
-  showToast("SVG exported.");
+  const fileName = await saveFile({
+    content: svg,
+    defaultFileName: "polydraw-logo.svg",
+    pickerId: "polydraw-svg",
+    pickerDescription: "SVG image",
+    pickerAccept: { "image/svg+xml": [".svg"] },
+    promptMessage: "Export SVG as",
+    extension: ".svg",
+    mimeType: "image/svg+xml",
+  });
+  if (fileName === null) {
+    return;
+  }
+
+  showToast(`SVG exported as ${fileName}.`);
 }
 
 function downloadBlob(content: string, fileName: string, type: string) {
